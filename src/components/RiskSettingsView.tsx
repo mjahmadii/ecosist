@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { RiskPersona, RiskThresholds } from '../types';
-import { ShieldAlert, Shield, Sliders, Info, CheckCircle2, RefreshCw, Key } from 'lucide-react';
+import { ShieldAlert, Shield, Sliders, Info, CheckCircle2, RefreshCw, Key, Wifi, WifiOff } from 'lucide-react';
+import { getApiKeySource } from '../lib/geminiClient';
 
 interface RiskSettingsViewProps {
   activePersona: RiskPersona;
@@ -19,26 +20,28 @@ export default function RiskSettingsView({
   apiKey,
   onUpdateApiKey
 }: RiskSettingsViewProps) {
+  const invalidPlaceholders = ['default-system-key', 'system-secure-key', 'legacy-key', 'demo-mode'];
   const [keyInput, setKeyInput] = useState(() => {
-    if (!apiKey || apiKey === 'default-system-key' || apiKey === 'legacy-key') {
-      return '';
-    }
+    if (!apiKey || invalidPlaceholders.includes(apiKey)) return '';
     return apiKey;
   });
   const [showSavedToast, setShowSavedToast] = useState(false);
 
+  const keySource = getApiKeySource(apiKey);
+
   const handleSaveKey = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateApiKey(keyInput.trim() || 'default-system-key');
+    const trimmed = keyInput.trim();
+    onUpdateApiKey(trimmed || 'demo-mode');
     setShowSavedToast(true);
-    setTimeout(() => setShowSavedToast(false), 3000);
+    setTimeout(() => setShowSavedToast(false), 3500);
   };
 
-  const handleUseDefault = () => {
+  const handleClearKey = () => {
     setKeyInput('');
-    onUpdateApiKey('default-system-key');
+    onUpdateApiKey('demo-mode');
     setShowSavedToast(true);
-    setTimeout(() => setShowSavedToast(false), 3000);
+    setTimeout(() => setShowSavedToast(false), 3500);
   };
   
   // Risk Persona Presets Handlers
@@ -107,7 +110,19 @@ export default function RiskSettingsView({
       {/* API Key Configuration Panel */}
       <div className="bg-[#16161a] border border-white/10 p-5 rounded-xl shadow-lg space-y-4" dir="rtl">
         <div className="flex justify-between items-center border-b border-white/5 pb-3">
-          <span className="text-[10px] text-neutral-500 font-mono font-bold">DECISION ENGINE KEY</span>
+          {/* Connection Status Badge */}
+          <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border ${
+            keySource === 'user'
+              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+              : keySource === 'system'
+              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              : 'bg-neutral-500/10 text-neutral-500 border-neutral-500/20'
+          }`}>
+            {keySource !== 'offline' ? <Wifi size={11} /> : <WifiOff size={11} />}
+            <span>
+              {keySource === 'user' ? 'کلید شخصی — متصل به Gemini' : keySource === 'system' ? 'کلید سیستم — متصل به Gemini' : 'حالت آفلاین — بدون اتصال'}
+            </span>
+          </div>
           <h4 className="text-sm font-bold text-white flex items-center gap-2">
             <Key size={15} className="text-blue-400" />
             اتصال هوشمند هسته تصمیم‌یار مالی سپه
@@ -116,40 +131,50 @@ export default function RiskSettingsView({
 
         <form onSubmit={handleSaveKey} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
           <div className="md:col-span-8 space-y-1.5 text-right">
-            <label className="text-[11px] text-neutral-400 font-bold block">کلید دسترسی هوش مصنوعی (API Key):</label>
+            <label className="text-[11px] text-neutral-400 font-bold block">
+              کلید شخصی Gemini API (اختیاری — از <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300">Google AI Studio</a> دریافت کنید):
+            </label>
             <input
               type="password"
-              placeholder="کلید ارتباطی خود را در این بخش وارد کنید..."
+              placeholder={keySource === 'system' ? 'کلید سیستم فعال است — برای تغییر، کلید شخصی وارد کنید...' : 'AIza... یا کلید Gemini خود را وارد کنید'}
               value={keyInput}
               onChange={(e) => setKeyInput(e.target.value)}
-              className="w-full bg-[#0a0a0b] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-[#0a0a0b] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono placeholder:text-neutral-600"
             />
           </div>
-          
+
           <div className="md:col-span-4 flex gap-2">
             <button
               type="submit"
               id="save-api-key"
               className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs active:translate-y-px transition-all cursor-pointer"
             >
-              به‌روزرسانی کلید
+              ذخیره کلید
             </button>
-            <button
-              type="button"
-              onClick={handleUseDefault}
-              className="flex-1 py-2.5 bg-[#0a0a0b] hover:bg-white/5 border border-white/10 text-neutral-300 hover:text-white font-bold rounded-xl text-[11px] transition-all cursor-pointer"
-            >
-              استفاده از کلید عمومی
-            </button>
+            {keySource === 'user' && (
+              <button
+                type="button"
+                onClick={handleClearKey}
+                className="flex-1 py-2.5 bg-[#0a0a0b] hover:bg-red-500/10 border border-white/10 hover:border-red-500/20 text-neutral-300 hover:text-red-400 font-bold rounded-xl text-[11px] transition-all cursor-pointer"
+              >
+                حذف کلید
+              </button>
+            )}
           </div>
         </form>
 
         {showSavedToast && (
-          <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-bold text-center animate-fade-in flex items-center justify-center gap-1.5">
+          <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-bold text-center flex items-center justify-center gap-1.5">
             <CheckCircle2 size={12} />
-            <span>کلید با موفقیت در مرورگر شما ثبت و فعال گردید!</span>
+            <span>تنظیمات کلید با موفقیت ذخیره شد!</span>
           </div>
         )}
+
+        <div className="text-[10px] text-neutral-600 leading-relaxed space-y-1 border-t border-white/5 pt-3" dir="rtl">
+          <p>• <strong className="text-neutral-500">کلید شخصی:</strong> در localStorage مرورگر شما ذخیره می‌شود و هیچ‌گاه به سرور ارسال نمی‌شود.</p>
+          <p>• <strong className="text-neutral-500">کلید سیستم:</strong> در صورت عدم وارد کردن کلید شخصی، از کلید سیستمی استفاده می‌شود (در صورت پیکربندی مدیر).</p>
+          <p>• <strong className="text-neutral-500">حالت آفلاین:</strong> در صورت عدم وجود کلید معتبر، موتور تحلیل آفلاین فعال می‌شود.</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

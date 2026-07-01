@@ -1,7 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
 import { Subsidiary, RiskPersona, RiskThresholds } from '../types';
 
-// Cached client per-key to avoid creating new instances repeatedly
+// Build-time key (from GitHub Secret VITE_GEMINI_API_KEY) — never in source code
+const BUILD_TIME_KEY: string = typeof __VITE_GEMINI_API_KEY__ !== 'undefined' ? __VITE_GEMINI_API_KEY__ : '';
+
 let cachedClient: { key: string; ai: GoogleGenAI } | null = null;
 
 function getClient(apiKey: string): GoogleGenAI {
@@ -13,16 +15,34 @@ function getClient(apiKey: string): GoogleGenAI {
 
 function isValidApiKey(key: string | null | undefined): boolean {
   const k = key?.trim();
-  return !!(k && k.length > 10 && k !== 'default-system-key' && k !== 'system-secure-key' && k !== 'legacy-key' && k !== 'demo-mode');
+  return !!(k && k.length > 10 && !['default-system-key', 'system-secure-key', 'legacy-key', 'demo-mode'].includes(k));
 }
 
-export function isUsingRealApi(apiKey: string | null): boolean {
-  return isValidApiKey(apiKey);
+/**
+ * Resolves the effective API key:
+ * 1. User-provided key from localStorage (highest priority)
+ * 2. Build-time injected key from GitHub Secret
+ * 3. null → offline mock mode
+ */
+function resolveApiKey(userKey: string | null): string | null {
+  if (isValidApiKey(userKey)) return userKey!.trim();
+  if (isValidApiKey(BUILD_TIME_KEY)) return BUILD_TIME_KEY.trim();
+  return null;
+}
+
+export function isUsingRealApi(userKey: string | null): boolean {
+  return resolveApiKey(userKey) !== null;
+}
+
+export function getApiKeySource(userKey: string | null): 'user' | 'system' | 'offline' {
+  if (isValidApiKey(userKey)) return 'user';
+  if (isValidApiKey(BUILD_TIME_KEY)) return 'system';
+  return 'offline';
 }
 
 export async function askGeminiAssistant(
   prompt: string,
-  apiKey: string | null,
+  userKey: string | null,
   activeCompany: Subsidiary | null,
   persona: RiskPersona,
   thresholds: RiskThresholds,
@@ -31,14 +51,16 @@ export async function askGeminiAssistant(
   creativity: 'precise' | 'balanced' | 'innovative' = 'balanced'
 ): Promise<string> {
 
-  if (!isValidApiKey(apiKey)) {
+  const effectiveKey = resolveApiKey(userKey);
+
+  if (!effectiveKey) {
     return generateMockAiResponse(prompt, activeCompany, persona, thresholds, tone, depth, creativity);
   }
 
   const systemPrompt = buildSystemPrompt(activeCompany, persona, thresholds, tone, depth, creativity);
 
   try {
-    const ai = getClient(apiKey!.trim());
+    const ai = getClient(effectiveKey);
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.0-flash',
@@ -56,7 +78,6 @@ export async function askGeminiAssistant(
 
   } catch (err: any) {
     const msg = err?.message || String(err);
-    // Surface real API errors back to the caller so UI can show them
     throw new Error(`❌ خطای Gemini API: ${msg}`);
   }
 }

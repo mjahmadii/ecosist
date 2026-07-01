@@ -15,10 +15,11 @@ import FloatingAssistant from './components/FloatingAssistant';
 import GovernanceComplianceView from './components/GovernanceComplianceView';
 import StrategicPortfolioView from './components/StrategicPortfolioView';
 
-import { 
-  Building2, Sliders, Database, Activity, Cpu, Award, 
+import {
+  Building2, Sliders, Database, Activity, Cpu, Award,
   LogOut, ShieldCheck, Key, User, TrendingUp, HelpCircle, AlertOctagon, Sun, Moon, MessageSquare, Wallet2, Menu, X
 } from 'lucide-react';
+import { getApiKeySource } from './lib/geminiClient';
 
 export default function App() {
   // Session States
@@ -453,7 +454,14 @@ export default function App() {
             </div>
             <div className="flex justify-between items-center text-neutral-500 font-sans">
               <span className="text-right">دستیار هوشمند:</span>
-              <span className="text-blue-400 font-bold text-left select-all">فعال و برخط</span>
+              {(() => {
+                const src = getApiKeySource(apiKey);
+                return (
+                  <span className={`font-bold text-left select-all ${src !== 'offline' ? 'text-emerald-400' : 'text-neutral-500'}`}>
+                    {src === 'user' ? 'کلید شخصی' : src === 'system' ? 'کلید سیستم' : 'حالت آفلاین'}
+                  </span>
+                );
+              })()}
             </div>
             <div className="text-[9px] text-neutral-600 border-t border-white/5 pt-1.5 text-center font-mono">
               BANK SEPAH SECURE PORTAL &bull; 2026

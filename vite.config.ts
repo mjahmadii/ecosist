@@ -19,5 +19,9 @@ export default defineConfig(() => {
     build: {
       outDir: 'dist',
     },
+    define: {
+      // Injected at build time from GitHub Secret — never stored in source code
+      __VITE_GEMINI_API_KEY__: JSON.stringify(process.env.VITE_GEMINI_API_KEY || ''),
+    },
   };
 });
