@@ -42,11 +42,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         {isUser ? <span className="text-white text-sm font-bold">م</span> : <Brain className="w-4 h-4 text-white" />}
       </div>
       <div className={`max-w-[80%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
-        <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-          isUser
-            ? 'bg-brand-600/30 border border-brand-500/30 text-white rounded-tl-none'
-            : 'bg-white/5 border border-white/10 text-slate-200 rounded-tr-none'
-        }`}>
+        <div className={isUser ? 'chat-user px-4 py-3 text-sm leading-relaxed' : 'chat-ai px-4 py-3 text-sm leading-relaxed'} style={{ color: 'var(--text-1)' }}>
           {msg.isStreaming ? (
             <span className="whitespace-pre-wrap">{msg.content}<span className="inline-block w-0.5 h-4 bg-brand-400 animate-pulse ml-0.5" /></span>
           ) : (
@@ -68,10 +64,39 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
+const PERSONAS = [
+  {
+    id: 'conservative',
+    label: 'حسابرس سخت‌گیر',
+    icon: '🛡️',
+    desc: 'ریسک‌گریز — تمرکز بر ایمنی و انطباق',
+    color: '#22d3ee',
+    systemSuffix: 'شما یک حسابرس سخت‌گیر و ریسک‌گریز هستید. هر پیشنهادی را از منظر ریسک و انطباق بررسی کنید. محافظه‌کارانه عمل کنید.',
+  },
+  {
+    id: 'balanced',
+    label: 'مستشار استراتژیک',
+    icon: '⚖️',
+    desc: 'متعادل — تحلیل جامع و متوازن',
+    color: '#637bff',
+    systemSuffix: 'شما یک مستشار استراتژیک با تجربه هستید. تحلیل متوازن، اجرایی و قابل اتکا ارائه دهید.',
+  },
+  {
+    id: 'aggressive',
+    label: 'کارآفرین جسور',
+    icon: '🚀',
+    desc: 'فرصت‌جو — تمرکز بر رشد و نوآوری',
+    color: '#f59e0b',
+    systemSuffix: 'شما یک کارآفرین جسور و فرصت‌طلب هستید. روی پتانسیل رشد، نوآوری و فرصت‌های بازار تمرکز کنید.',
+  },
+];
+
 export default function AIAssistant() {
   const { chatMessages, addChatMessage, updateLastMessage, apiKey, aiProvider, holdingData, settings, apiKeyConfigured } = useAppStore();
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [persona, setPersona] = useState<'conservative' | 'balanced' | 'aggressive'>('balanced');
+  const [showPersonas, setShowPersonas] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -107,7 +132,8 @@ export default function AIAssistant() {
     }
 
     try {
-      const systemPrompt = buildSystemPrompt(holdingData?.name ?? 'گروه سرمایه‌گذاری', settings);
+      const activePersona = PERSONAS.find(p => p.id === persona) ?? PERSONAS[1];
+      const systemPrompt = buildSystemPrompt(holdingData?.name ?? 'گروه سرمایه‌گذاری', settings) + '\n\n' + activePersona.systemSuffix;
       const messages = [
         ...chatMessages.filter((m) => m.role !== 'assistant' || m.content).slice(-10).map((m) => ({
           role: m.role,
@@ -284,28 +310,62 @@ export default function AIAssistant() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] p-6 gap-4 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between flex-shrink-0">
+      <div className="flex items-center justify-between flex-shrink-0 flex-wrap gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-700 to-brand-700 flex items-center justify-center">
+          <h2 className="section-title flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #8b5cf6, #3d52ff)' }}>
               <Brain className="w-4 h-4 text-white" />
             </div>
             دستیار هوشمند مالی
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5 mr-10">
-            {apiKey === 'demo-mode' ? 'حالت نمایشی — برای تحلیل کامل API وارد کنید' : `متصل به ${aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'}`}
+          <p className="text-xs mt-0.5 mr-10" style={{ color: 'var(--text-3)' }}>
+            {apiKey === 'demo-mode' ? 'حالت نمایشی — برای تحلیل کامل API وارد کنید' : `متصل به ${aiProvider === 'openai' ? 'OpenAI' : aiProvider === 'anthropic' ? 'Anthropic' : 'Google Gemini'}`}
           </p>
         </div>
-        {chatMessages.length > 0 && (
-          <button onClick={clearChat} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 px-3 py-1.5 rounded-lg hover:bg-white/5 transition-all">
-            <RotateCcw className="w-3.5 h-3.5" />
-            پاک‌سازی
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Persona selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowPersonas(!showPersonas)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border-2)', color: PERSONAS.find(p => p.id === persona)?.color ?? 'var(--text-2)' }}
+            >
+              <span>{PERSONAS.find(p => p.id === persona)?.icon}</span>
+              <span>{PERSONAS.find(p => p.id === persona)?.label}</span>
+            </button>
+            {showPersonas && (
+              <div className="absolute left-0 top-full mt-2 w-64 rounded-xl z-50 p-2 animate-scale-in"
+                style={{ background: 'var(--modal-bg)', border: '1px solid var(--border-2)', boxShadow: 'var(--card-shadow-lg)' }}>
+                {PERSONAS.map((p) => (
+                  <button key={p.id} onClick={() => { setPersona(p.id as typeof persona); setShowPersonas(false); }}
+                    className="w-full text-right p-3 rounded-lg mb-1 last:mb-0 transition-all"
+                    style={persona === p.id
+                      ? { background: 'var(--surface-active)', border: '1px solid var(--border-accent)' }
+                      : { background: 'transparent', border: '1px solid transparent' }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{p.icon}</span>
+                      <div>
+                        <p className="text-xs font-bold" style={{ color: p.color }}>{p.label}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-3)' }}>{p.desc}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {chatMessages.length > 0 && (
+            <button onClick={clearChat} className="btn btn-ghost btn-sm">
+              <RotateCcw className="w-3.5 h-3.5" />
+              پاک‌سازی
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 overflow-y-auto glass rounded-2xl border border-white/10 p-4 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto card p-4 space-y-4 min-h-0">
         {chatMessages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center py-8">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-700/30 to-brand-700/30 border border-violet-500/20 flex items-center justify-center mb-4">

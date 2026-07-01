@@ -13,6 +13,7 @@ import CapitalView from '@/components/analysis/CapitalView';
 import DataView from '@/components/analysis/DataView';
 import SettingsView from '@/components/settings/SettingsView';
 import PromptManager from '@/components/admin/PromptManager';
+import StrategicView from '@/components/analysis/StrategicView';
 
 const viewMap: Record<string, React.FC> = {
   dashboard: MainDashboard,
@@ -26,6 +27,7 @@ const viewMap: Record<string, React.FC> = {
   data: DataView,
   settings: SettingsView,
   'prompt-manager': PromptManager,
+  strategic: StrategicView,
 };
 
 export default function AppShell() {

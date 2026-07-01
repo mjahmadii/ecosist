@@ -1,11 +1,11 @@
 'use client';
+import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Legend } from 'recharts';
-import { Shield, AlertTriangle, CheckCircle, Users, TrendingUp, Award, ChevronRight } from 'lucide-react';
+import { Shield, AlertTriangle, CheckCircle, Users, Brain, Sparkles, Loader, FileSpreadsheet, FileText, Table } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import KPICard from '@/components/dashboard/KPICard';
 import ContextChat from '@/components/ui/ContextChat';
 import ExportMenu from '@/components/ui/ExportMenu';
-import { FileSpreadsheet, FileText, Table } from 'lucide-react';
 import { exportPortfolioExcel, exportSubsidiariesToCSV, exportToPDF } from '@/utils';
 
 const QUICK_PROMPTS = [
@@ -33,8 +33,28 @@ const GOV_LABEL: Record<string, string> = {
   boardMeetingAttendance: 'حضور در جلسات',
 };
 
+async function callAIGovernance(prompt: string, system: string, apiKey: string, provider: string, model: string): Promise<string> {
+  if (!apiKey || apiKey === 'demo-mode') return '';
+  if (provider === 'openai') {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: model || 'gpt-4o', messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], max_tokens: 1200 }) });
+    return (await r.json()).choices?.[0]?.message?.content ?? '';
+  }
+  if (provider === 'anthropic') {
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: model || 'claude-opus-4-8', max_tokens: 1200, system, messages: [{ role: 'user', content: prompt }] }) });
+    return (await r.json()).content?.[0]?.text ?? '';
+  }
+  const gm = model || 'gemini-2.0-flash';
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1200 } }) });
+  return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+}
+
 export default function GovernanceView() {
-  const { holdingData } = useAppStore();
+  const { holdingData, apiKey, aiProvider, settings } = useAppStore();
+  const [auditResult, setAuditResult] = useState('');
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [actionPlanResult, setActionPlanResult] = useState('');
+  const [actionPlanLoading, setActionPlanLoading] = useState(false);
+
   if (!holdingData) return <div className="p-6 text-center py-20" style={{ color: 'var(--text-3)' }}>داده‌ای موجود نیست</div>;
 
   const { subsidiaries } = holdingData;
@@ -55,13 +75,31 @@ export default function GovernanceView() {
     value: subsidiaries.reduce((a, s) => a + (s.governance[key as keyof typeof s.governance] as number ?? 0), 0) / subsidiaries.length,
   }));
 
-  const contextData = `
-حاکمیت شرکتی گروه — میانگین امتیاز: ${avgGovernanceScore.toFixed(1)}
-میانگین استقلال هیئت مدیره: ${avgBoardIndependence.toFixed(1)}٪
-شرکت‌های با حاکمیت خوب (>75): ${highGovernance}
-شرکت‌های با حاکمیت ضعیف (<60): ${lowGovernance}
-${subsidiaries.map((s) => `${s.name}: ${s.governanceScore}`).join(' | ')}
-  `.trim();
+  const contextData = `حاکمیت گروه — امتیاز: ${avgGovernanceScore.toFixed(1)} | استقلال: ${avgBoardIndependence.toFixed(1)}٪ | خوب: ${highGovernance} | ضعیف: ${lowGovernance} | ${subsidiaries.map((s) => `${s.name}:${s.governanceScore}`).join('|')}`;
+
+  const govSystem = `شما حسابرس انطباق حاکمیت شرکتی برای گروه ${holdingData.name} هستید. بر اساس استانداردهای OECD و کدهای حاکمیتی ایران تحلیل کنید. پاسخ به فارسی باشد.`;
+
+  const handleAudit = async () => {
+    setAuditLoading(true);
+    const govData = subsidiaries.map((s) => `${s.name}: استقلال ${s.governance.boardIndependence}٪، شفافیت ${s.governance.disclosureScore}، مدیریت ریسک ${s.governance.riskManagement}، امتیاز کلی ${s.governanceScore}`).join('\n');
+    const prompt = `حسابرسی انطباق حاکمیت شرکتی برای شرکت‌های زیر انجام دهید:\n${govData}\n\nانحرافات از استانداردها را شناسایی و راهکارهای اصلاحی اولویت‌بندی‌شده ارائه دهید.`;
+    try {
+      const res = await callAIGovernance(prompt, govSystem, apiKey, aiProvider, settings.aiModel);
+      setAuditResult(res || `**حسابرسی انطباق حاکمیتی:**\n\n${subsidiaries.filter(s=>s.governance.boardIndependence<65).map(s=>`• ${s.name}: استقلال ${s.governance.boardIndependence}٪ — نیاز به افزایش اعضای مستقل`).join('\n')}\n\n**توصیه کلی:** بهبود ساختار هیئت مدیره و افزایش شفافیت گزارشگری در اولویت`);
+    } catch { setAuditResult('خطا در تحلیل. لطفاً دوباره تلاش کنید.'); }
+    setAuditLoading(false);
+  };
+
+  const handleActionPlan = async () => {
+    setActionPlanLoading(true);
+    const worstSub = [...subsidiaries].sort((a,b) => a.governanceScore - b.governanceScore).slice(0,3);
+    const prompt = `برنامه اقدام ۱۲ ماهه برای بهبود حاکمیت شرکتی گروه ${holdingData.name} (میانگین ${avgGovernanceScore.toFixed(0)}/۱۰۰) تدوین کنید. ضعیف‌ترین شرکت‌ها: ${worstSub.map(s=>`${s.name}(${s.governanceScore})`).join('، ')}. برنامه با مراحل مشخص، مسئولیت‌ها و شاخص‌های سنجش باشد.`;
+    try {
+      const res = await callAIGovernance(prompt, govSystem, apiKey, aiProvider, settings.aiModel);
+      setActionPlanResult(res || `**برنامه بهبود حاکمیت ۱۲ ماهه:**\n\n**سه ماه اول:**\n• ارزیابی جامع ساختار هیئت مدیره\n• تدوین منشور هیئت مدیره\n\n**سه ماه دوم:**\n• جذب اعضای مستقل جدید\n• بهبود گزارشگری مالی\n\n**شش ماه آخر:**\n• اجرای سیستم ارزیابی عملکرد هیئت\n• پیاده‌سازی کد رفتاری حاکمیتی`);
+    } catch { setActionPlanResult('خطا در تولید برنامه. لطفاً دوباره تلاش کنید.'); }
+    setActionPlanLoading(false);
+  };
 
   return (
     <div className="p-5 space-y-5 animate-fade-in" id="governance-content">
@@ -207,6 +245,59 @@ ${subsidiaries.map((s) => `${s.name}: ${s.governanceScore}`).join(' | ')}
             <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: 'rgba(0,196,140,0.06)', border: '1px solid rgba(0,196,140,0.15)' }}>
               <CheckCircle className="w-4 h-4 text-emerald-400" />
               <p className="text-sm" style={{ color: 'var(--text-2)' }}>مسئله حاکمیتی بحرانی شناسایی نشد</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AI Compliance Auditor */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.2),rgba(61,82,255,0.15))', border:'1px solid rgba(139,92,246,0.25)' }}>
+              <Brain className="w-4 h-4" style={{ color: '#a78bfa' }} />
+            </div>
+            <div>
+              <h3 className="section-title">حسابرس خودکار انطباق</h3>
+              <p className="section-subtitle">تحلیل انحرافات حاکمیتی توسط هوش مصنوعی</p>
+            </div>
+          </div>
+          <button onClick={handleAudit} disabled={auditLoading} className="btn btn-violet btn-sm w-full mb-3">
+            {auditLoading ? <><Loader className="w-3 h-3 animate-spin" />در حال بررسی...</> : <><Sparkles className="w-3 h-3" />اجرای حسابرسی انطباق</>}
+          </button>
+          {auditResult && (
+            <div className="ai-result-card animate-slide-up text-sm leading-7" style={{ color: 'var(--text-1)', whiteSpace: 'pre-line' }}>
+              {auditResult.split('\n').map((l,i) => {
+                const isH = l.startsWith('**') && l.endsWith('**');
+                if (isH) return <p key={i} className="font-bold mt-1" style={{color:'#a78bfa'}}>{l.replace(/\*\*/g,'')}</p>;
+                const parts = l.split(/(\*\*[^*]+\*\*)/g);
+                return <p key={i}>{parts.map((p,j)=>p.startsWith('**')?<strong key={j}>{p.replace(/\*\*/g,'')}</strong>:p)}</p>;
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,rgba(0,196,140,0.2),rgba(61,82,255,0.1))', border:'1px solid rgba(0,196,140,0.25)' }}>
+              <CheckCircle className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="section-title">تدوین برنامه بهبود حاکمیت</h3>
+              <p className="section-subtitle">Action Plan هوشمند برای ارتقای رتبه حاکمیتی</p>
+            </div>
+          </div>
+          <button onClick={handleActionPlan} disabled={actionPlanLoading} className="btn btn-emerald btn-sm w-full mb-3">
+            {actionPlanLoading ? <><Loader className="w-3 h-3 animate-spin" />در حال تدوین...</> : <><Brain className="w-3 h-3" />تولید برنامه اقدام ۱۲ ماهه</>}
+          </button>
+          {actionPlanResult && (
+            <div className="ai-result-card animate-slide-up text-sm leading-7" style={{ color: 'var(--text-1)', whiteSpace: 'pre-line' }}>
+              {actionPlanResult.split('\n').map((l,i) => {
+                const isH = l.startsWith('**') && l.endsWith('**');
+                if (isH) return <p key={i} className="font-bold mt-1" style={{color:'#34d399'}}>{l.replace(/\*\*/g,'')}</p>;
+                const parts = l.split(/(\*\*[^*]+\*\*)/g);
+                return <p key={i}>{parts.map((p,j)=>p.startsWith('**')?<strong key={j}>{p.replace(/\*\*/g,'')}</strong>:p)}</p>;
+              })}
             </div>
           )}
         </div>
