@@ -1,4 +1,24 @@
+import { GoogleGenAI } from '@google/genai';
 import { Subsidiary, RiskPersona, RiskThresholds } from '../types';
+
+// Cached client per-key to avoid creating new instances repeatedly
+let cachedClient: { key: string; ai: GoogleGenAI } | null = null;
+
+function getClient(apiKey: string): GoogleGenAI {
+  if (!cachedClient || cachedClient.key !== apiKey) {
+    cachedClient = { key: apiKey, ai: new GoogleGenAI({ apiKey }) };
+  }
+  return cachedClient.ai;
+}
+
+function isValidApiKey(key: string | null | undefined): boolean {
+  const k = key?.trim();
+  return !!(k && k.length > 10 && k !== 'default-system-key' && k !== 'system-secure-key' && k !== 'legacy-key' && k !== 'demo-mode');
+}
+
+export function isUsingRealApi(apiKey: string | null): boolean {
+  return isValidApiKey(apiKey);
+}
 
 export async function askGeminiAssistant(
   prompt: string,
@@ -10,46 +30,34 @@ export async function askGeminiAssistant(
   depth: 'summary' | 'comprehensive' = 'comprehensive',
   creativity: 'precise' | 'balanced' | 'innovative' = 'balanced'
 ): Promise<string> {
-  // If no real API key, use offline mock engine
-  const trimmedKey = apiKey?.trim();
-  const isRealKey = trimmedKey && trimmedKey !== 'default-system-key' && trimmedKey !== 'system-secure-key' && trimmedKey.startsWith('AIza');
 
-  if (!isRealKey) {
+  if (!isValidApiKey(apiKey)) {
     return generateMockAiResponse(prompt, activeCompany, persona, thresholds, tone, depth, creativity);
   }
 
+  const systemPrompt = buildSystemPrompt(activeCompany, persona, thresholds, tone, depth, creativity);
+
   try {
-    const systemPrompt = buildSystemPrompt(activeCompany, persona, thresholds, tone, depth, creativity);
-    const model = 'gemini-2.0-flash';
+    const ai = getClient(apiKey!.trim());
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${trimmedKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 2048,
-            temperature: creativity === 'innovative' ? 0.9 : creativity === 'balanced' ? 0.7 : 0.3,
-          },
-        }),
-      }
-    );
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: systemPrompt,
+        maxOutputTokens: 2048,
+        temperature: creativity === 'innovative' ? 0.9 : creativity === 'balanced' ? 0.7 : 0.3,
+      },
+    });
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error?.message || `Gemini API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = response.text;
     if (text) return text;
-    throw new Error('پاسخ نامعتبر از Gemini API دریافت شد.');
-  } catch (error: any) {
-    console.warn('Gemini API call failed, falling back to offline engine:', error?.message);
-    return generateMockAiResponse(prompt, activeCompany, persona, thresholds, tone, depth, creativity);
+    throw new Error('پاسخ خالی از Gemini دریافت شد.');
+
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    // Surface real API errors back to the caller so UI can show them
+    throw new Error(`❌ خطای Gemini API: ${msg}`);
   }
 }
 
@@ -63,17 +71,17 @@ function buildSystemPrompt(
 ): string {
   const personaFa = persona === 'CONSERVATIVE' ? 'محافظه‌کارانه' : persona === 'BALANCED' ? 'متعادل' : 'تهاجمی';
   const companyCtx = company
-    ? `شرکت فعال: ${company.name} (${company.ticker}) | بخش: ${company.sector} | امتیاز سلامت: ${company.healthScore} | Z-Score: ${company.riskMetrics.altmanZScore}`
-    : 'سطح هلدینگ — همه شرکت‌های تابعه';
+    ? `شرکت فعال: ${company.name} (${company.ticker}) — بخش: ${company.sector} — امتیاز سلامت: ${company.healthScore}/100 — Z-Score: ${company.riskMetrics.altmanZScore.toFixed(2)}`
+    : 'سطح کلان هلدینگ — همه شرکت‌های تابعه';
   return `شما دستیار هوشمند هلدینگ سرمایه‌گذاری بانک سپه هستید.
 رویکرد ریسک: ${personaFa} | لحن: ${tone} | عمق: ${depth} | خلاقیت: ${creativity}
 ${companyCtx}
-آستانه‌های مجاز: بدهی=${thresholds.maxDebtToEquity} | جاری=${thresholds.minCurrentRatio} | ESG=${thresholds.minEsgScore}
-پاسخ‌ها را کاملاً به فارسی، حرفه‌ای و کاربردی ارائه دهید.`;
+آستانه‌ها: بدهی≤${thresholds.maxDebtToEquity} | جاری≥${thresholds.minCurrentRatio} | ESG≥${thresholds.minEsgScore}
+همیشه به فارسی، حرفه‌ای، دقیق و کاربردی پاسخ دهید.`;
 }
 
-// High-fidelity offline mock engine
-function generateMockAiResponse(
+// ─── High-Fidelity Offline Mock Engine ────────────────────────────────────────
+export function generateMockAiResponse(
   prompt: string,
   company: Subsidiary | null,
   persona: RiskPersona,
@@ -82,63 +90,64 @@ function generateMockAiResponse(
   depth: 'summary' | 'comprehensive',
   creativity: 'precise' | 'balanced' | 'innovative'
 ): string {
-  const normPrompt = prompt.toLowerCase();
+  const norm = prompt.toLowerCase();
   const personaFa = persona === 'CONSERVATIVE' ? 'بسیار محافظه‌کارانه' : persona === 'BALANCED' ? 'متعادل (پویا)' : 'تهاجمی / مقتدرانه';
-  const toneFa = tone === 'conservative' ? 'تحت اشتهای ریسک محافظه‌کارانه' : tone === 'creative' ? 'با نگاه توسعه‌محور استراتژیک' : 'با تحلیل سرد علمی و بیطرفانه';
-  const headerPrefix = `[دستیار مالی | لحن: ${toneFa} | دقت: ${creativity === 'precise' ? 'بالا' : creativity === 'innovative' ? 'استنباطی' : 'متعادل'}]`;
+  const toneFa = tone === 'conservative' ? 'محافظه‌کارانه' : tone === 'creative' ? 'توسعه‌محور' : 'تحلیلی بیطرف';
+  const hdr = `[حالت آفلاین | لحن: ${toneFa}]`;
 
   if (!company) {
-    if (depth === 'summary') {
-      return `### ${headerPrefix} خلاصه مدیریتی وضعیت هلدینگ سپه
-۱. **تمرکز پرتفوی**: لزوم تخصیص سرمایه از صنایع پرریسک به دارویی به دلیل بازدهی نقدی پایدار.
-۲. **شاخص بدهی**: تعدادی از تابعه‌ها از آستانه بدهی مجاز ${thresholds.maxDebtToEquity} عبور کرده‌اند.
-۳. **ریسک حاکمیتی**: افزایش نسبت اعضای مستقل هیئت مدیره به حداقل ۳۵٪ پیشنهاد می‌شود.`;
-    }
-    return `### ${headerPrefix} گزارش جامع راهبردی هلدینگ سرمایه‌گذاری بانک سپه (${personaFa})
+    if (depth === 'summary') return `### ${hdr} خلاصه مدیریتی هلدینگ
+۱. **تمرکز پرتفوی**: انتقال سرمایه از صنایع پرریسک به دارویی توصیه می‌شود.
+۲. **شاخص بدهی**: شرکت‌هایی که از آستانه ${thresholds.maxDebtToEquity} عبور کرده‌اند نیاز به ساختاردهی دارند.
+۳. **حاکمیت**: افزایش نسبت مدیران مستقل به ۴۰٪ اولویت اصلی است.`;
 
-دستیار هوشمند با رویکرد **${personaFa}** آماده تحلیل است.
-
-۱. **انتقال به صنایع دفاعی و دارویی**: افزایش تخصیص سرمایه به شرکت‌های دارویی به دلیل حاشیه سود بالا.
-۲. **پایش نسبت بدهی**: شرکت‌هایی که بالاتر از سقف ${thresholds.maxDebtToEquity} هستند نیاز به ساختاردهی مجدد دارند.
-۳. **حاکمیت شرکتی**: تشکیل کمیته حاکمیت شرکتی جهت تدوین آیین‌نامه‌های کنترل ریسک.
-
-**پیشنهاد ساختاری**: بهینه‌سازی سبد پرتفولیو با هدف افزایش نسبت شارپ و کاهش ریسک سیستماتیک.`;
-  }
-
-  if (normPrompt.includes('bankruptcy') || normPrompt.includes('altman') || normPrompt.includes('ورشکستگی') || normPrompt.includes('آلتمن')) {
-    const isHighRisk = company.riskMetrics.altmanZScore < 1.8;
-    return `### ${headerPrefix} گزارش مدل Altman Z-Score برای ${company.name}
-
-**امتیاز Z-Score فعلی**: **${company.riskMetrics.altmanZScore.toFixed(2)}**
-**سطح ریسک**: **${company.riskMetrics.bankruptcyRisk}**
-
-${isHighRisk
-  ? `⚠️ شرکت در محدوده خطر قرار دارد. نسبت سرمایه در گردش منفی و هزینه‌های بهره بالا، سود انباشته را تضعیف کرده است.`
-  : `✅ شرکت در محدوده امن قرار دارد. نقدینگی قدرتمند سپر محافظتی ایجاد کرده است.`}
-
-**اقدامات پیشنهادی**:
-۱. نسبت جاری: **${company.riskMetrics.currentRatio.toFixed(2)}** → هدف: **${thresholds.minCurrentRatio}**
-۲. بازنگری در موجودی انبار برای آزادسازی نقدینگی
-۳. وصول مطالبات تجاری سنواتی به عنوان اولویت اول`;
-  }
-
-  if (normPrompt.includes('board') || normPrompt.includes('مدیره') || normPrompt.includes('حاکمیت')) {
-    return `### ${headerPrefix} طرح راهبردی حاکمیت شرکتی ${company.name}
-
-۱. **مدیران مستقل**: نسبت فعلی (${Math.round(company.governanceData.independentDirectorsRatio * 100)}٪) → هدف: ۴۰٪
-۲. **نرخ حضور**: ${Math.round(company.governanceData.attendanceRate * 100)}٪ → کف نظارتی: ${Math.round(thresholds.minAttendanceRate * 100)}٪
-۳. **کیفیت حسابرسی**: رتبه **${company.governanceData.auditQualityRating}** → ارتقاء به ردیف A
-
-*تاثیر تخمینی: +۱۵٪ بهبود شفافیت مالی طی ۱۲ ماه*`;
-  }
-
-  return `### ${headerPrefix} تحلیل راهبردی ${company.name} (${company.ticker})
+    return `### ${hdr} گزارش جامع راهبردی هلدینگ سرمایه‌گذاری بانک سپه
 
 **رویکرد**: ${personaFa}
 
-۱. **عملکرد مالی**: درآمد ${company.financialData.revenue.toLocaleString('fa-IR')} | سود ${company.financialData.netProfit.toLocaleString('fa-IR')} م.ت | حاشیه ${Math.round((company.financialData.netProfit / company.financialData.revenue) * 100)}٪
-۲. **بدهی**: ${company.riskMetrics.debtToEquity.toFixed(2)} (سقف: ${thresholds.maxDebtToEquity}) ${company.riskMetrics.debtToEquity > thresholds.maxDebtToEquity ? '❌ فراتر از سقف' : '✅ مجاز'}
-۳. **ESG**: امتیاز ${company.esgData.totalEsgScore}٪ | انتشار کربن: ${company.esgData.carbonEmissionsLevel}
+۱. **تخصیص سرمایه**: انتقال از صنایع چرخه‌ای به دارویی و غذایی با ثبات نقدی بالا.
+۲. **کنترل اهرم**: شرکت‌های با D/E بالاتر از ${thresholds.maxDebtToEquity} نیاز فوری به تأمین مالی مجدد دارند.
+۳. **حاکمیت شرکتی**: تشکیل کمیته مستقل حاکمیت و ارتقای معیارهای ESG.
 
-**توصیه**: با پروفایل ریسک ${personaFa}، تمرکز بر بهبود نسبت جاری و کاهش هزینه‌های مالی اولویت دارد.`;
+> 💡 برای دریافت تحلیل‌های دقیق‌تر با داده‌های واقعی، کلید Gemini API را در تنظیمات وارد کنید.`;
+  }
+
+  if (norm.includes('bankruptcy') || norm.includes('altman') || norm.includes('ورشکستگی') || norm.includes('آلتمن')) {
+    const isHigh = company.riskMetrics.altmanZScore < 1.8;
+    return `### ${hdr} تحلیل Altman Z-Score — ${company.name}
+
+**Z-Score**: **${company.riskMetrics.altmanZScore.toFixed(2)}** | **سطح ریسک**: ${company.riskMetrics.bankruptcyRisk}
+
+${isHigh ? '⚠️ **در محدوده خطر**: نسبت سرمایه در گردش منفی و هزینه بهره بالا.' : '✅ **در محدوده امن**: نقدینگی پایدار و جریان نقدی مثبت.'}
+
+**اقدامات پیشنهادی**:
+• نسبت جاری فعلی: ${company.riskMetrics.currentRatio.toFixed(2)} → هدف: ≥${thresholds.minCurrentRatio}
+• وصول مطالبات سنواتی جهت آزادسازی نقدینگی
+• بازنگری ساختار بدهی و جایگزینی وام‌های کوتاه‌مدت`;
+  }
+
+  if (norm.includes('board') || norm.includes('مدیره') || norm.includes('حاکمیت') || norm.includes('governance')) {
+    return `### ${hdr} حاکمیت شرکتی — ${company.name}
+
+۱. **مدیران مستقل**: ${Math.round(company.governanceData.independentDirectorsRatio * 100)}٪ (هدف: ۴۰٪)
+۲. **نرخ حضور**: ${Math.round(company.governanceData.attendanceRate * 100)}٪ (کف نظارتی: ${Math.round(thresholds.minAttendanceRate * 100)}٪)
+۳. **کیفیت حسابرسی**: رتبه **${company.governanceData.auditQualityRating}** — ارتقاء به A پیشنهاد می‌شود.
+
+*تأثیر تخمینی: +۱۵٪ شفافیت مالی طی ۱۲ ماه*`;
+  }
+
+  return `### ${hdr} تحلیل راهبردی — ${company.name} (${company.ticker})
+
+**رویکرد**: ${personaFa}
+
+| شاخص | مقدار | وضعیت |
+|------|-------|--------|
+| درآمد | ${company.financialData.revenue.toLocaleString('fa-IR')} م.ت | — |
+| سود خالص | ${company.financialData.netProfit.toLocaleString('fa-IR')} م.ت | — |
+| حاشیه سود | ${Math.round((company.financialData.netProfit / company.financialData.revenue) * 100)}٪ | — |
+| نسبت بدهی | ${company.riskMetrics.debtToEquity.toFixed(2)} | ${company.riskMetrics.debtToEquity > thresholds.maxDebtToEquity ? '❌' : '✅'} |
+| نسبت جاری | ${company.riskMetrics.currentRatio.toFixed(2)} | ${company.riskMetrics.currentRatio < thresholds.minCurrentRatio ? '❌' : '✅'} |
+| امتیاز ESG | ${company.esgData.totalEsgScore}٪ | — |
+
+> 💡 برای تحلیل عمیق‌تر، کلید Gemini API را در بخش **تنظیمات** وارد کنید.`;
 }

@@ -27,7 +27,7 @@ export default function App() {
   });
   
   const [apiKey, setApiKey] = useState<string | null>(() => {
-    return localStorage.getItem('ehsan_api_key') || null;
+    return localStorage.getItem('ehsan_api_key') || 'demo-mode';
   });
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -193,14 +193,6 @@ export default function App() {
     return (
       <div className={theme === 'light' ? 'light-theme' : ''}>
         <Login onLoginSuccess={handleLoginSuccess} />
-      </div>
-    );
-  }
-
-  if (!apiKey) {
-    return (
-      <div className={theme === 'light' ? 'light-theme' : ''}>
-        <ApiKeyConfig onConfigComplete={handleConfigComplete} />
       </div>
     );
   }
