@@ -1,15 +1,21 @@
 'use client';
 import { useState } from 'react';
-import { Search, Filter, Download, Building2, Users, TrendingUp, ArrowUp, ArrowDown, X, ChevronDown, FileSpreadsheet, FileText, Table } from 'lucide-react';
+import {
+  Search, Download, ArrowUp, ArrowDown, X,
+  FileSpreadsheet, FileText, Table, Sparkles, Loader, Brain,
+} from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import {
   formatCurrency, getStatusConfig, getSectorLabel, getSectorColor, getScoreColor, getScoreBg,
-  calcDebtRatio, calcCurrentRatio, calcROE, calcNetMargin, exportDashboardReport,
+  calcDebtRatio, calcCurrentRatio, calcROE, calcNetMargin,
   exportPortfolioExcel, exportSubsidiariesToCSV, exportToPDF,
 } from '@/utils';
 import type { Subsidiary } from '@/types';
 import ContextChat from '@/components/ui/ContextChat';
 import ExportMenu from '@/components/ui/ExportMenu';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts';
 
 const QUICK_PROMPTS = [
   'بهترین و بدترین شرکت‌های تابعه را مقایسه کن',
@@ -17,10 +23,39 @@ const QUICK_PROMPTS = [
   'پیشنهاد بهبود عملکرد شرکت‌های ضعیف',
   'تحلیل ساختار مالکیت پرتفولیو',
 ];
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar,
-} from 'recharts';
+
+async function callAISimple(prompt: string, systemP: string, apiKey: string, provider: string, model: string): Promise<string> {
+  if (!apiKey || apiKey === 'demo-mode') return '';
+  if (provider === 'openai') {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: model || 'gpt-4o', messages: [{ role: 'system', content: systemP }, { role: 'user', content: prompt }], max_tokens: 1000 }),
+    });
+    return (await r.json()).choices?.[0]?.message?.content ?? '';
+  }
+  if (provider === 'anthropic') {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: model || 'claude-opus-4-8', max_tokens: 1000, system: systemP, messages: [{ role: 'user', content: prompt }] }),
+    });
+    return (await r.json()).content?.[0]?.text ?? '';
+  }
+  const gm = model || 'gemini-2.0-flash';
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${apiKey}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system_instruction: { parts: [{ text: systemP }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1000 } }),
+  });
+  return (await r.json()).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+}
+
+function demoSWOT(sub: Subsidiary): string {
+  return `**نقاط قوت:**\n• امتیاز کلی ${sub.overallScore}/۱۰۰ — جایگاه ${sub.overallScore >= 75 ? 'برتر' : 'متوسط'} در پرتفوی\n• استقلال هیئت مدیره ${sub.governance.boardIndependence}٪\n• امتیاز ESG: ${sub.esg.overallScore} (رتبه ${sub.esg.rating})\n\n**نقاط ضعف:**\n• احتمال ورشکستگی آلتمن ${sub.altmanZ.bankruptcyProbability}٪\n• امتیاز شفافیت ${sub.governance.disclosureScore}/۱۰۰ نیاز به بهبود\n\n**فرصت‌ها:**\n• پتانسیل بهبود ESG از طریق سرمایه‌گذاری سبز\n• همکاری استراتژیک با سایر تابعه‌های گروه\n\n**تهدیدها:**\n• ریسک سیستماتیک بازار در بخش ${getSectorLabel(sub.sector)}\n• تغییرات مقرراتی و الزامات انطباق`;
+}
+
+function demoRisk(sub: Subsidiary): string {
+  const riskLevel = sub.altmanZ.bankruptcyProbability > 40 ? 'بحرانی' : sub.altmanZ.bankruptcyProbability > 25 ? 'متوسط' : 'پایین';
+  return `**سطح ریسک کلی: ${riskLevel}**\n\n• Z-Score آلتمن ${sub.altmanZ.zScore} — وضعیت ${sub.altmanZ.bankruptcyRisk === 'safe' ? 'امن' : sub.altmanZ.bankruptcyRisk === 'grey' ? 'خاکستری' : 'بحرانی'}\n• نسبت بدهی ${calcDebtRatio(sub)}٪ — ${calcDebtRatio(sub) > 65 ? 'بالاتر از آستانه هشدار' : 'در محدوده قابل قبول'}\n• نسبت جاری ${calcCurrentRatio(sub).toFixed(2)} — ${calcCurrentRatio(sub) < 1.2 ? 'کمتر از حداقل توصیه‌شده' : 'کافی'}\n\n**توصیه:** ${sub.altmanZ.bankruptcyProbability > 35 ? 'بررسی فوری ساختار مالی و نقدینگی' : 'پایش ماهانه شاخص‌های کلیدی'}`
+}
 
 function ScoreBadge({ score }: { score: number }) {
   return (
@@ -31,7 +66,12 @@ function ScoreBadge({ score }: { score: number }) {
 }
 
 function SubsidiaryDetail({ sub, onClose }: { sub: Subsidiary; onClose: () => void }) {
-  const [activeTab, setActiveTab] = useState<'financial' | 'governance' | 'esg' | 'board' | 'alerts'>('financial');
+  const [activeTab, setActiveTab] = useState<'financial' | 'governance' | 'esg' | 'board' | 'alerts' | 'swot' | 'ai-risk'>('financial');
+  const [swotResult, setSwotResult] = useState('');
+  const [swotLoading, setSwotLoading] = useState(false);
+  const [riskResult, setRiskResult] = useState('');
+  const [riskLoading, setRiskLoading] = useState(false);
+
   const latest = sub.financials[sub.financials.length - 1];
   const tabs = [
     { id: 'financial', label: 'مالی' },
@@ -39,9 +79,33 @@ function SubsidiaryDetail({ sub, onClose }: { sub: Subsidiary; onClose: () => vo
     { id: 'esg', label: 'ESG' },
     { id: 'board', label: 'هیئت مدیره' },
     { id: 'alerts', label: `هشدارها (${sub.alerts.filter(a => !a.acknowledged).length})` },
+    { id: 'swot', label: '🧠 SWOT' },
+    { id: 'ai-risk', label: '⚠️ ریسک AI' },
   ] as const;
 
-  const { acknowledgeAlert } = useAppStore();
+  const { acknowledgeAlert, apiKey, aiProvider, settings } = useAppStore();
+
+  const handleSWOT = async () => {
+    setSwotLoading(true);
+    const sp = `شما تحلیلگر استراتژیک هستید. تحلیل SWOT دقیق و کاربردی به فارسی ارائه دهید.`;
+    const prompt = `تحلیل SWOT کامل برای ${sub.name} (بخش: ${getSectorLabel(sub.sector)}، امتیاز کلی: ${sub.overallScore}/۱۰۰، ریسک ورشکستگی: ${sub.altmanZ.bankruptcyProbability}٪، ESG: ${sub.esg.overallScore}، حاکمیت: ${sub.governanceScore}) ارائه دهید. هر بخش ۳-۴ آیتم مشخص و قابل اقدام داشته باشد.`;
+    try {
+      const res = await callAISimple(prompt, sp, apiKey, aiProvider, settings.aiModel);
+      setSwotResult(res || demoSWOT(sub));
+    } catch { setSwotResult(demoSWOT(sub)); }
+    setSwotLoading(false);
+  };
+
+  const handleAIRisk = async () => {
+    setRiskLoading(true);
+    const sp = `شما کارشناس ریسک مالی هستید. گزارش ریسک دقیق و اجرایی به فارسی ارائه دهید.`;
+    const prompt = `ارزیابی ریسک جامع برای ${sub.name}: Z-Score ${sub.altmanZ.zScore} (${sub.altmanZ.bankruptcyRisk})، نسبت بدهی ${calcDebtRatio(sub)}٪، نسبت جاری ${calcCurrentRatio(sub).toFixed(2)}، ROE ${calcROE(sub)}٪، احتمال ورشکستگی ${sub.altmanZ.bankruptcyProbability}٪. ریسک‌های بحرانی، توصیه‌های کنترلی و نقشه راه کاهش ریسک ارائه دهید.`;
+    try {
+      const res = await callAISimple(prompt, sp, apiKey, aiProvider, settings.aiModel);
+      setRiskResult(res || demoRisk(sub));
+    } catch { setRiskResult(demoRisk(sub)); }
+    setRiskLoading(false);
+  };
 
   const zConfig = {
     safe: { color: 'text-emerald-400', label: 'امن', bg: 'bg-emerald-500/10' },
@@ -56,8 +120,8 @@ function SubsidiaryDetail({ sub, onClose }: { sub: Subsidiary; onClose: () => vo
         <div className="sticky top-0 backdrop-blur-md border-b p-5 z-10" style={{ background: 'var(--bg-2)', borderColor: 'var(--border)' }}>
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-xl font-bold text-white">{sub.name}</h2>
-              <p className="text-sm text-slate-400 mt-0.5">{sub.nameEn}</p>
+              <h2 className="text-xl font-bold" style={{ color: 'var(--text-1)' }}>{sub.name}</h2>
+              <p className="text-sm mt-0.5" style={{ color: 'var(--text-3)' }}>{sub.nameEn}</p>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: getSectorColor(sub.sector) + '30', color: getSectorColor(sub.sector) }}>
                   {getSectorLabel(sub.sector)}
@@ -295,33 +359,107 @@ function SubsidiaryDetail({ sub, onClose }: { sub: Subsidiary; onClose: () => vo
           {activeTab === 'alerts' && (
             <div className="space-y-3">
               {sub.alerts.length === 0 ? (
-                <div className="text-center py-8 text-slate-500 text-sm">بدون هشدار فعال</div>
+                <div className="text-center py-8 text-sm" style={{ color: 'var(--text-3)' }}>بدون هشدار فعال</div>
               ) : (
                 sub.alerts.map((alert) => {
-                  const sc = {
-                    critical: { color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
-                    warning: { color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
-                    info: { color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
+                  const colors = {
+                    critical: { color: '#fb7185', bg: 'rgba(244,63,94,0.08)', border: 'rgba(244,63,94,0.2)' },
+                    warning: { color: '#fbbf24', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.2)' },
+                    info: { color: '#60a5fa', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.2)' },
                   }[alert.severity];
                   return (
-                    <div key={alert.id} className={`p-4 rounded-xl border ${sc.bg} ${alert.acknowledged ? 'opacity-40' : ''}`}>
+                    <div key={alert.id} className="p-4 rounded-xl" style={{ background: colors.bg, border: `1px solid ${colors.border}`, opacity: alert.acknowledged ? 0.45 : 1 }}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <p className={`text-sm font-medium ${sc.color}`}>{alert.title}</p>
-                          <p className="text-xs text-slate-400 mt-1 leading-relaxed">{alert.description}</p>
+                          <p className="text-sm font-medium" style={{ color: colors.color }}>{alert.title}</p>
+                          <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--text-2)' }}>{alert.description}</p>
                         </div>
                         {!alert.acknowledged && (
-                          <button
-                            onClick={() => acknowledgeAlert(sub.id, alert.id)}
-                            className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-lg hover:bg-white/5 transition-all flex-shrink-0 mr-2"
-                          >
-                            تأیید
-                          </button>
+                          <button onClick={() => acknowledgeAlert(sub.id, alert.id)}
+                            className="text-xs px-2 py-1 rounded-lg transition-all flex-shrink-0 mr-2"
+                            style={{ color: 'var(--text-3)' }}>تأیید</button>
                         )}
                       </div>
                     </div>
                   );
                 })
+              )}
+            </div>
+          )}
+
+          {activeTab === 'swot' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="p-4 rounded-xl ai-card">
+                <div className="flex items-center gap-2 mb-3">
+                  <Brain className="w-4 h-4" style={{ color: '#637bff' }} />
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-1)' }}>تحلیل SWOT هوشمند</p>
+                </div>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-2)' }}>
+                  شناسایی نقاط قوت، ضعف، فرصت‌ها و تهدیدها بر اساس داده‌های واقعی شرکت توسط هوش مصنوعی
+                </p>
+                <button onClick={handleSWOT} disabled={swotLoading} className="btn btn-primary btn-sm w-full">
+                  {swotLoading ? <><Loader className="w-3 h-3 animate-spin" />در حال تحلیل...</> : <><Sparkles className="w-3 h-3" />تولید تحلیل SWOT</>}
+                </button>
+              </div>
+              {swotResult && (
+                <div className="space-y-3 animate-slide-up">
+                  {[
+                    { key: 'نقاط قوت', cls: 'swot-strengths', color: '#34d399', icon: '💪' },
+                    { key: 'نقاط ضعف', cls: 'swot-weaknesses', color: '#fb7185', icon: '⚠️' },
+                    { key: 'فرصت', cls: 'swot-opportunities', color: '#637bff', icon: '🚀' },
+                    { key: 'تهدید', cls: 'swot-threats', color: '#fbbf24', icon: '🛡️' },
+                  ].map(({ key, cls, color, icon }) => {
+                    const section = swotResult.split('\n\n').find((s) => s.includes(key)) ?? '';
+                    if (!section) return null;
+                    const lines = section.split('\n').filter(Boolean);
+                    return (
+                      <div key={key} className={`swot-card ${cls}`}>
+                        <p className="text-sm font-bold mb-2" style={{ color }}>{icon} {lines[0]?.replace(/\*\*/g,'').replace(/:$/, '')}</p>
+                        <ul className="space-y-1">
+                          {lines.slice(1).map((l, i) => (
+                            <li key={i} className="text-xs flex items-start gap-1.5" style={{ color: 'var(--text-2)' }}>
+                              <span style={{ color }}>•</span>
+                              <span>{l.replace(/^[•\-\*]\s*/, '').replace(/\*\*/g, '')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                  {/* Raw fallback if structured parsing fails */}
+                  {![...['نقاط قوت','نقاط ضعف','فرصت','تهدید']].some(k => swotResult.includes(k)) && (
+                    <div className="ai-result-card text-sm leading-7" style={{ color: 'var(--text-1)', whiteSpace: 'pre-line' }}>{swotResult}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'ai-risk' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(244,63,94,0.06)', border: '1px solid rgba(244,63,94,0.2)', borderRadius: 14 }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-4 h-4 text-rose-400" />
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-1)' }}>ارزیابی ریسک هوشمند</p>
+                </div>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-2)' }}>
+                  آنالیز عمیق ریسک‌های مالی، عملیاتی و حاکمیتی توسط هوش مصنوعی
+                </p>
+                <button onClick={handleAIRisk} disabled={riskLoading} className="btn btn-danger btn-sm w-full">
+                  {riskLoading ? <><Loader className="w-3 h-3 animate-spin" />در حال تحلیل...</> : <><Brain className="w-3 h-3" />تولید گزارش ریسک</>}
+                </button>
+              </div>
+              {riskResult && (
+                <div className="ai-result-card animate-slide-up">
+                  <div className="text-sm leading-7 space-y-1" style={{ color: 'var(--text-1)', whiteSpace: 'pre-line' }}>
+                    {riskResult.split('\n').map((line, i) => {
+                      const isHeader = line.startsWith('**') && line.endsWith('**');
+                      if (isHeader) return <p key={i} className="font-bold mt-2" style={{ color: '#fb7185' }}>{line.replace(/\*\*/g,'')}</p>;
+                      const parts = line.split(/(\*\*[^*]+\*\*)/g);
+                      return <p key={i}>{parts.map((p,j) => p.startsWith('**') ? <strong key={j}>{p.replace(/\*\*/g,'')}</strong> : p)}</p>;
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )}

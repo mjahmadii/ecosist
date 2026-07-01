@@ -1,8 +1,8 @@
 'use client';
 import {
   LayoutDashboard, Building2, TrendingUp, Brain, Shield, Leaf,
-  Settings, LogOut, Bell, BarChart3, AlertTriangle, Wallet,
-  ChevronLeft, Settings2, Database,
+  Settings, LogOut, BarChart3, AlertTriangle, Wallet,
+  ChevronLeft, Settings2, GitMerge, Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { cn } from '@/utils';
@@ -15,6 +15,7 @@ const navItems = [
   { id: 'esg', label: 'گزارش ESG', icon: Leaf, group: 'main' },
   { id: 'risk', label: 'مدیریت ریسک', icon: AlertTriangle, group: 'main' },
   { id: 'capital', label: 'تخصیص سرمایه', icon: Wallet, group: 'main' },
+  { id: 'strategic', label: 'پرتفوی و M&A', icon: GitMerge, group: 'main' },
   { id: 'data', label: 'داده‌ها و گزارش‌ها', icon: BarChart3, group: 'main' },
   { id: 'ai-assistant', label: 'دستیار هوشمند', icon: Brain, group: 'ai' },
   { id: 'prompt-manager', label: 'مدیریت پرامپت‌ها', icon: Settings2, group: 'ai' },

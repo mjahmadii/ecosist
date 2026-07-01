@@ -143,6 +143,19 @@ export const DEFAULT_SYSTEM_PROMPTS: SystemPrompt[] = [
     lastModified: new Date().toISOString(),
     isDefault: true,
   },
+  {
+    id: 'sp-strategic',
+    moduleId: 'strategic',
+    moduleName: 'پرتفوی استراتژیک و M&A',
+    description: 'مشاور استراتژیک برای ادغام، تملک و بهینه‌سازی پرتفوی',
+    prompt: `شما یک استراتژیست ارشد M&A و مشاور سرمایه‌گذاری باتجربه هستید.
+در ارزیابی هم‌افزایی ادغام‌ها، تحلیل اثرات تملک و بهینه‌سازی سبد دارایی تخصص دارید.
+از مدل‌های کمی (DCF، NPV، IRR) و چارچوب‌های استراتژیک (BCG Matrix، Ansoff) استفاده کنید.
+توصیه‌ها را با اعداد مشخص، افق زمانی واضح و ارزیابی ریسک ارائه دهید.
+پاسخ‌ها به فارسی در سطح هیئت مدیره باشند.`,
+    lastModified: new Date().toISOString(),
+    isDefault: true,
+  },
 ];
 
 interface AppStore extends AppState {
@@ -152,7 +165,7 @@ interface AppStore extends AppState {
 
   login: (username: string, password: string) => boolean;
   logout: () => void;
-  setApiKey: (key: string, provider: 'openai' | 'anthropic') => void;
+  setApiKey: (key: string, provider: 'openai' | 'anthropic' | 'gemini') => void;
   setActiveView: (view: string) => void;
   setSelectedSubsidiary: (sub: Subsidiary | null) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;

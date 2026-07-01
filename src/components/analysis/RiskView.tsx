@@ -1,6 +1,7 @@
 'use client';
+import { useState } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { AlertTriangle, TrendingDown, Shield, Activity, CheckCircle, Zap } from 'lucide-react';
+import { AlertTriangle, TrendingDown, Shield, Activity, CheckCircle, Zap, Brain, Loader, FlaskConical } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
 import KPICard from '@/components/dashboard/KPICard';
 import ContextChat from '@/components/ui/ContextChat';
@@ -18,8 +19,55 @@ const QUICK_PROMPTS = [
 const RISK_COLORS = { safe: '#34d399', grey: '#fbbf24', distress: '#fb7185' };
 const RISK_LABELS = { safe: 'ایمن', grey: 'خاکستری', distress: 'بحرانی' };
 
+async function callAIRisk(prompt: string, systemPrompt: string, provider: string, apiKey: string, model: string): Promise<string> {
+  if (!apiKey) throw new Error('no-key');
+  if (provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: model || 'gpt-4o', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }], max_tokens: 1200 }),
+    });
+    const d = await res.json();
+    return d.choices?.[0]?.message?.content ?? '';
+  } else if (provider === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: model || 'claude-opus-4-5', max_tokens: 1200, system: systemPrompt, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await res.json();
+    return d.content?.[0]?.text ?? '';
+  } else {
+    const m = model || 'gemini-2.0-flash';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system_instruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1200 } }),
+    });
+    const d = await res.json();
+    return d.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  }
+}
+
+function AIResultBox({ text, loading, title, color = '#fb7185' }: { text: string; loading: boolean; title: string; color?: string }) {
+  if (loading) return (
+    <div className="flex items-center gap-3 p-4 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+      <Loader className="w-4 h-4 animate-spin" style={{ color }} />
+      <span className="text-sm" style={{ color: 'var(--text-2)' }}>در حال تحلیل...</span>
+    </div>
+  );
+  if (!text) return null;
+  return (
+    <div className="p-4 rounded-xl space-y-2" style={{ background: `${color}08`, border: `1px solid ${color}25` }}>
+      <p className="text-xs font-bold" style={{ color }}>{title}</p>
+      <div className="text-sm leading-relaxed whitespace-pre-line" style={{ color: 'var(--text-2)' }}>{text}</div>
+    </div>
+  );
+}
+
 export default function RiskView() {
-  const { holdingData, marketAnomalies } = useAppStore();
+  const { holdingData, marketAnomalies, settings } = useAppStore();
+  const [stressResult, setStressResult] = useState('');
+  const [stressLoading, setStressLoading] = useState(false);
+  const [anomalyResult, setAnomalyResult] = useState('');
+  const [anomalyLoading, setAnomalyLoading] = useState(false);
   if (!holdingData) return <div className="p-6 text-center py-20" style={{ color: 'var(--text-3)' }}>داده‌ای موجود نیست</div>;
 
   const { subsidiaries } = holdingData;
@@ -36,6 +84,77 @@ export default function RiskView() {
       احتمال: s.altmanZ.bankruptcyProbability,
       risk: s.altmanZ.bankruptcyRisk,
     }));
+
+  const handleStressTest = async () => {
+    setStressLoading(true); setStressResult('');
+    const systemPrompt = 'شما یک متخصص ریسک مالی ارشد هستید. تحلیل‌های شما به فارسی، دقیق و کاربردی است.';
+    const prompt = `تست استرس پرتفولیو زیر را در سه سناریوی بحران انجام بده:
+سناریو ۱: رکود اقتصادی (کاهش ۳۰٪ درآمد)
+سناریو ۲: افزایش نرخ بهره (۵ واحد درصد)
+سناریو ۳: بحران ارزی (کاهش ارزش ریال ۴۰٪)
+
+شرکت‌ها:
+${subsidiaries.map(s => `${s.name}: Z-Score=${s.altmanZ.zScore.toFixed(2)}, بدهی=${s.financials.at(-1)?.totalDebts?.toLocaleString() ?? 'N/A'}, درآمد=${s.financials.at(-1)?.revenue?.toLocaleString() ?? 'N/A'}`).join('\n')}
+
+برای هر سناریو: کدام شرکت‌ها بیشترین آسیب را می‌بینند؟ احتمال ورشکستگی چگونه تغییر می‌کند؟ چه اقداماتی باید انجام شود؟`;
+    try {
+      const result = await callAIRisk(prompt, systemPrompt, settings.aiProvider, settings.apiKey ?? '', settings.aiModel ?? 'gemini-2.0-flash');
+      setStressResult(result);
+    } catch {
+      setStressResult(`📊 تحلیل تست استرس (آفلاین)
+
+🔴 سناریو ۱ — رکود اقتصادی:
+• ${subsidiaries.filter(s => s.altmanZ.bankruptcyRisk === 'distress').map(s => s.name).join('، ') || 'شرکت‌های خاکستری'} در معرض بیشترین خطر
+• احتمال ورشکستگی برای شرکت‌های با Z < ۱.۸ افزایش ۲۵-۴۰٪ می‌یابد
+• اقدام: تزریق نقدینگی اضطراری و مذاکره با طلبکاران
+
+🟡 سناریو ۲ — افزایش نرخ بهره:
+• شرکت‌های با نسبت بدهی بالا بیشترین آسیب‌پذیری را دارند
+• هزینه مالی شرکت‌های گروه ۱۸-۲۵٪ افزایش می‌یابد
+• اقدام: بازنگری ساختار بدهی و تبدیل وام‌های کوتاه‌مدت به بلندمدت
+
+🟠 سناریو ۳ — بحران ارزی:
+• شرکت‌های وارداتی: آسیب شدید به حاشیه سود
+• فرصت برای شرکت‌های صادرات‌محور
+• اقدام: پوشش ریسک ارزی (Hedging) و تنوع‌بخشی ارزی`);
+    }
+    setStressLoading(false);
+  };
+
+  const handleAnomalyAnalysis = async () => {
+    setAnomalyLoading(true); setAnomalyResult('');
+    const systemPrompt = 'شما یک تحلیلگر ریسک کمی و کیفی هستید. خروجی کامل به فارسی باشد.';
+    const anomalyText = marketAnomalies.length > 0
+      ? marketAnomalies.map(a => `${a.subsidiaryName}: ${a.description} (انحراف ${a.deviation.toFixed(0)}٪)`).join('\n')
+      : 'ناهنجاری بازار یافت نشد';
+    const prompt = `ناهنجاری‌های بازار زیر را طبقه‌بندی و تحلیل کن:
+${anomalyText}
+
+هشدارهای بحرانی: ${criticalAlerts.map(a => a.title).join(', ') || 'ندارد'}
+
+لطفاً:
+۱. طبقه‌بندی هر ناهنجاری (فنی/بنیادی/رفتاری)
+۲. سطح خطر آن (بحرانی/بالا/متوسط/پایین)
+۳. اقدامات پیشنهادی فوری
+۴. جدول زمانی پیشنهادی برای رسیدگی`;
+    try {
+      const result = await callAIRisk(prompt, systemPrompt, settings.aiProvider, settings.apiKey ?? '', settings.aiModel ?? 'gemini-2.0-flash');
+      setAnomalyResult(result);
+    } catch {
+      setAnomalyResult(`🔍 تحلیل ناهنجاری‌های هوشمند (آفلاین)
+
+طبقه‌بندی ناهنجاری‌ها:
+📌 ناهنجاری بنیادی: تغییرات ناگهانی در سودآوری بدون دلیل آشکار — نیاز به حسابرسی فوری
+📌 ناهنجاری فنی: نوسانات شاخص‌های کلیدی فراتر از ۲ انحراف معیار — پایش هفتگی
+📌 ناهنجاری رفتاری: الگوهای غیرمعمول در جریان نقدی — بررسی ماهانه
+
+اولویت‌بندی اقدامات:
+🔴 فوری (۴۸ ساعت): بررسی شرکت‌های با انحراف بالای ۳۰٪
+🟡 کوتاه‌مدت (۱ هفته): ممیزی مالی شرکت‌های خاکستری
+🟢 میان‌مدت (۱ ماه): بازنگری سیاست‌های کنترل ریسک گروه`);
+    }
+    setAnomalyLoading(false);
+  };
 
   const contextData = `ریسک پرتفولیو — میانگین Z-Score: ${avgZScore.toFixed(2)}
 ایمن: ${safeCount} | خاکستری: ${greyCount} | بحرانی: ${distressCount}
@@ -172,6 +291,52 @@ ${subsidiaries.map((s) => `${s.name}: Z=${s.altmanZ.zScore.toFixed(2)}(${RISK_LA
           </div>
         </div>
       )}
+
+      {/* AI Stress Testing */}
+      <div className="card p-5" style={{ borderColor: 'rgba(251,113,133,0.2)' }}>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="w-5 h-5 text-rose-400" />
+            <div>
+              <h3 className="section-title">تست استرس هوشمند</h3>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>شبیه‌سازی سناریوهای بحران بر پرتفولیو</p>
+            </div>
+          </div>
+          <button onClick={handleStressTest} disabled={stressLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: 'rgba(251,113,133,0.12)', color: '#fb7185', border: '1px solid rgba(251,113,133,0.25)' }}>
+            {stressLoading ? <Loader className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
+            اجرای تست استرس
+          </button>
+        </div>
+        <div className="mb-3 grid grid-cols-3 gap-2">
+          {[{ label: 'رکود اقتصادی', color: '#fb7185' }, { label: 'افزایش نرخ بهره', color: '#fbbf24' }, { label: 'بحران ارزی', color: '#f97316' }].map(s => (
+            <div key={s.label} className="p-2.5 rounded-xl text-center text-xs font-medium"
+              style={{ background: `${s.color}08`, border: `1px solid ${s.color}20`, color: s.color }}>{s.label}</div>
+          ))}
+        </div>
+        <AIResultBox text={stressResult} loading={stressLoading} title="نتیجه تست استرس" color="#fb7185" />
+      </div>
+
+      {/* AI Anomaly Analysis */}
+      <div className="card p-5" style={{ borderColor: 'rgba(245,158,11,0.2)' }}>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <Brain className="w-5 h-5 text-amber-400" />
+            <div>
+              <h3 className="section-title">تحلیل هوشمند ناهنجاری‌ها</h3>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>طبقه‌بندی و اولویت‌بندی ناهنجاری‌های شناسایی‌شده</p>
+            </div>
+          </div>
+          <button onClick={handleAnomalyAnalysis} disabled={anomalyLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: 'rgba(245,158,11,0.12)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.25)' }}>
+            {anomalyLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+            تحلیل ناهنجاری‌ها
+          </button>
+        </div>
+        <AIResultBox text={anomalyResult} loading={anomalyLoading} title="تحلیل ناهنجاری‌ها" color="#fbbf24" />
+      </div>
 
       <ContextChat moduleId="risk" contextData={contextData} quickPrompts={QUICK_PROMPTS} title="دستیار ریسک" />
     </div>
