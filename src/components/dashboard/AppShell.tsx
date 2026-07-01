@@ -12,6 +12,7 @@ import RiskView from '@/components/analysis/RiskView';
 import CapitalView from '@/components/analysis/CapitalView';
 import DataView from '@/components/analysis/DataView';
 import SettingsView from '@/components/settings/SettingsView';
+import PromptManager from '@/components/admin/PromptManager';
 
 const viewMap: Record<string, React.FC> = {
   dashboard: MainDashboard,
@@ -24,6 +25,7 @@ const viewMap: Record<string, React.FC> = {
   capital: CapitalView,
   data: DataView,
   settings: SettingsView,
+  'prompt-manager': PromptManager,
 };
 
 export default function AppShell() {
@@ -31,11 +33,11 @@ export default function AppShell() {
   const ActiveView = viewMap[activeView] ?? MainDashboard;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#080b14]">
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto" style={{ background: 'var(--bg)' }}>
           <ActiveView />
         </main>
       </div>

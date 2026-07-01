@@ -1,194 +1,201 @@
 'use client';
 import {
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
+  RadarChart, PolarGrid, PolarAngleAxis, Radar,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { Leaf, Wind, Users, Shield, Award, TrendingUp } from 'lucide-react';
+import { Leaf, Droplets, Wind, Users, Award, TrendingUp } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
-import { getScoreColor } from '@/utils';
+import KPICard from '@/components/dashboard/KPICard';
+import ContextChat from '@/components/ui/ContextChat';
+import ExportMenu from '@/components/ui/ExportMenu';
+import { FileSpreadsheet, FileText, Table } from 'lucide-react';
+import { exportPortfolioExcel, exportSubsidiariesToCSV, exportToPDF } from '@/utils';
 
-const RATING_COLORS: Record<string, string> = {
-  AAA: '#00e5b0', AA: '#10b981', A: '#34d399', BBB: '#60a5fa', BB: '#f59e0b', B: '#f97316', CCC: '#ff3d6e',
+const QUICK_PROMPTS = [
+  'وضعیت ESG گروه را تحلیل کن',
+  'مهم‌ترین فرصت‌های بهبود ESG',
+  'ریسک‌های آب‌وهوایی شرکت‌ها',
+  'مقایسه عملکرد ESG شرکت‌ها',
+];
+
+const ESG_RATINGS: Record<string, { color: string; bg: string; label: string }> = {
+  AAA: { color: '#34d399', bg: 'rgba(0,196,140,0.12)', label: 'ممتاز' },
+  AA:  { color: '#34d399', bg: 'rgba(0,196,140,0.10)', label: 'عالی' },
+  A:   { color: '#22d3ee', bg: 'rgba(0,212,255,0.10)', label: 'خوب' },
+  BBB: { color: '#fbbf24', bg: 'rgba(245,158,11,0.10)', label: 'متوسط' },
+  BB:  { color: '#fbbf24', bg: 'rgba(245,158,11,0.10)', label: 'زیر متوسط' },
+  B:   { color: '#fb7185', bg: 'rgba(244,63,94,0.10)', label: 'ضعیف' },
+  CCC: { color: '#fb7185', bg: 'rgba(244,63,94,0.12)', label: 'بحرانی' },
 };
+
+function ScoreBar({ value, color = '#10b981' }: { value: number; color?: string }) {
+  return (
+    <div className="score-track">
+      <div className="score-fill" style={{ width: `${value}%`, background: color }} />
+    </div>
+  );
+}
 
 export default function ESGView() {
   const { holdingData } = useAppStore();
-  if (!holdingData) return null;
+  if (!holdingData) return <div className="p-6 text-center py-20" style={{ color: 'var(--text-3)' }}>داده‌ای موجود نیست</div>;
 
   const { subsidiaries } = holdingData;
-  const avgESG = {
-    environmental: Math.round(subsidiaries.reduce((s, c) => s + Object.values(c.esg.environmental).reduce((a, b) => a + b, 0) / 5, 0) / subsidiaries.length),
-    social: Math.round(subsidiaries.reduce((s, c) => s + Object.values(c.esg.social).reduce((a, b) => a + b, 0) / 5, 0) / subsidiaries.length),
-    governance: Math.round(subsidiaries.reduce((s, c) => s + Object.values(c.esg.governance).reduce((a, b) => a + b, 0) / 5, 0) / subsidiaries.length),
-    overall: Math.round(subsidiaries.reduce((s, c) => s + c.esg.overallScore, 0) / subsidiaries.length),
-  };
+  const avgESG = subsidiaries.reduce((a, s) => a + s.esg.overallScore, 0) / subsidiaries.length;
+  const avgEnv = subsidiaries.reduce((a, s) => a + (s.esg.environmental.carbonEmissions + s.esg.environmental.energyEfficiency + s.esg.environmental.wasteManagement) / 3, 0) / subsidiaries.length;
+  const avgSocial = subsidiaries.reduce((a, s) => a + (s.esg.social.employeeSatisfaction + s.esg.social.communityInvestment) / 2, 0) / subsidiaries.length;
+  const avgGov = subsidiaries.reduce((a, s) => a + (s.esg.governance.transparencyScore + s.esg.governance.anticorruptionMeasures) / 2, 0) / subsidiaries.length;
 
-  const radarData = [
-    { subject: 'انتشار کربن', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.environmental.carbonEmissions, 0) / subsidiaries.length) },
-    { subject: 'بهره‌وری انرژی', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.environmental.energyEfficiency, 0) / subsidiaries.length) },
-    { subject: 'رضایت کارکنان', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.social.employeeSatisfaction, 0) / subsidiaries.length) },
-    { subject: 'تنوع جنسیتی', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.social.genderDiversityRatio, 0) / subsidiaries.length) },
-    { subject: 'شفافیت', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.governance.transparencyScore, 0) / subsidiaries.length) },
-    { subject: 'مبارزه با فساد', value: Math.round(subsidiaries.reduce((s, c) => s + c.esg.governance.anticorruptionMeasures, 0) / subsidiaries.length) },
-  ];
-
-  const esgBarData = subsidiaries.map((s) => ({
-    name: s.name,
-    محیط: Math.round(Object.values(s.esg.environmental).reduce((a, b) => a + b, 0) / 5),
-    اجتماعی: Math.round(Object.values(s.esg.social).slice(0, 5).reduce((a, b) => a + b, 0) / 5),
-    حاکمیت: Math.round(Object.values(s.esg.governance).reduce((a, b) => a + b, 0) / 5),
-    کلی: s.esg.overallScore,
+  const barData = subsidiaries.map((s) => ({
+    name: s.name.split(' ').slice(0, 2).join(' '),
+    'محیط‌زیست': Math.round((s.esg.environmental.carbonEmissions + s.esg.environmental.energyEfficiency + s.esg.environmental.wasteManagement) / 3),
+    'اجتماعی': Math.round((s.esg.social.employeeSatisfaction + s.esg.social.communityInvestment) / 2),
+    'حاکمیتی': Math.round((s.esg.governance.transparencyScore + s.esg.governance.anticorruptionMeasures) / 2),
   }));
 
+  const radarData = [
+    { subject: 'انتشار کربن', value: avgEnv },
+    { subject: 'بهره‌وری انرژی', value: subsidiaries.reduce((a, s) => a + s.esg.environmental.energyEfficiency, 0) / subsidiaries.length },
+    { subject: 'رضایت کارکنان', value: avgSocial },
+    { subject: 'تنوع جنسیتی', value: subsidiaries.reduce((a, s) => a + s.esg.social.genderDiversityRatio, 0) / subsidiaries.length },
+    { subject: 'شفافیت', value: avgGov },
+    { subject: 'ضد فساد', value: subsidiaries.reduce((a, s) => a + s.esg.governance.anticorruptionMeasures, 0) / subsidiaries.length },
+  ];
+
+  const contextData = `ESG گروه — میانگین: ${avgESG.toFixed(1)} | محیط: ${avgEnv.toFixed(1)} | اجتماعی: ${avgSocial.toFixed(1)} | حاکمیتی: ${avgGov.toFixed(1)}
+رتبه‌بندی: ${subsidiaries.map((s) => `${s.name}(${s.esg.rating})`).join(' | ')}`;
+
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'امتیاز کلی ESG', value: avgESG.overall, icon: Leaf, color: 'text-emerald-400', bg: 'from-emerald-600/20 to-emerald-900/10 border-emerald-500/20' },
-          { label: 'محیط زیست', value: avgESG.environmental, icon: Wind, color: 'text-cyan-400', bg: 'from-cyan-600/20 to-cyan-900/10 border-cyan-500/20' },
-          { label: 'اجتماعی', value: avgESG.social, icon: Users, color: 'text-violet-400', bg: 'from-violet-600/20 to-violet-900/10 border-violet-500/20' },
-          { label: 'حاکمیتی', value: avgESG.governance, icon: Shield, color: 'text-brand-400', bg: 'from-brand-600/20 to-brand-900/10 border-brand-500/20' },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <div key={label} className={`rounded-2xl p-5 bg-gradient-to-br border ${bg} card-glow`}>
-            <div className="flex items-center justify-between mb-3">
-              <Icon className={`w-5 h-5 ${color}`} />
-              <span className={`text-xs px-2 py-0.5 rounded-full ${value >= 70 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                {value >= 80 ? 'عالی' : value >= 65 ? 'خوب' : value >= 50 ? 'متوسط' : 'ضعیف'}
-              </span>
-            </div>
-            <p className={`text-3xl font-bold ${color}`}>{value}</p>
-            <p className="text-sm text-slate-400 mt-1">{label}</p>
-          </div>
-        ))}
+    <div className="p-5 space-y-5 animate-fade-in" id="esg-content">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="section-title">گزارش ESG و پایداری شرکتی</h2>
+          <p className="section-subtitle">ارزیابی عملکرد محیط‌زیستی، اجتماعی و حاکمیتی شرکت‌های تابعه</p>
+        </div>
+        <ExportMenu
+          options={[
+            { label: 'گزارش Excel', format: 'xlsx', icon: FileSpreadsheet, color: '#10b981', action: () => exportPortfolioExcel(holdingData) },
+            { label: 'CSV', format: 'csv', icon: Table, color: '#22d3ee', action: () => exportSubsidiariesToCSV(subsidiaries) },
+            { label: 'PDF', format: 'pdf', icon: FileText, color: '#a78bfa', action: () => exportToPDF('esg-content', 'گزارش_ESG') },
+          ]}
+        />
       </div>
 
-      {/* ESG ratings + radar */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Ratings table */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-4">رتبه‌بندی ESG شرکت‌های تابعه</h3>
-          <div className="space-y-3">
-            {[...subsidiaries].sort((a, b) => b.esg.overallScore - a.esg.overallScore).map((sub) => (
-              <div key={sub.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/3 border border-white/5">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0"
-                  style={{ background: RATING_COLORS[sub.esg.rating] + '25', color: RATING_COLORS[sub.esg.rating] }}
-                >
-                  {sub.esg.rating}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{sub.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="flex-1 h-1.5 rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
-                          width: `${sub.esg.overallScore}%`,
-                          background: `linear-gradient(to right, ${RATING_COLORS[sub.esg.rating]}, ${RATING_COLORS[sub.esg.rating]}88)`,
-                        }}
-                      />
-                    </div>
-                    <span className={`text-xs font-bold ${getScoreColor(sub.esg.overallScore)}`}>{sub.esg.overallScore}</span>
-                  </div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="flex gap-1 text-xs">
-                    <span className="text-cyan-400" title="محیط">
-                      🌱{Math.round(Object.values(sub.esg.environmental).reduce((a, b) => a + b, 0) / 5)}
-                    </span>
-                    <span className="text-violet-400" title="اجتماعی">
-                      👥{Math.round(Object.values(sub.esg.social).slice(0, 5).reduce((a, b) => a + b, 0) / 5)}
-                    </span>
-                    <span className="text-brand-400" title="حاکمیت">
-                      🏛{Math.round(Object.values(sub.esg.governance).reduce((a, b) => a + b, 0) / 5)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard title="امتیاز کلی ESG" value={avgESG.toFixed(0)} suffix="/۱۰۰" icon={Award} color="emerald" change={7.8} subtitle="میانگین گروه" />
+        <KPICard title="عملکرد محیط‌زیستی" value={avgEnv.toFixed(0)} suffix="/۱۰۰" icon={Wind} color="cyan" change={5.2} subtitle="E — Environmental" />
+        <KPICard title="عملکرد اجتماعی" value={avgSocial.toFixed(0)} suffix="/۱۰۰" icon={Users} color="violet" change={4.1} subtitle="S — Social" />
+        <KPICard title="حاکمیت پایداری" value={avgGov.toFixed(0)} suffix="/۱۰۰" icon={Leaf} color="brand" change={3.8} subtitle="G — Governance" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 card p-5">
+          <h3 className="section-title mb-1">مقایسه ESG شرکت‌های تابعه</h3>
+          <p className="section-subtitle mb-5">مقایسه سه بُعد محیط‌زیست، اجتماعی و حاکمیتی</p>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={barData} barSize={10}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="محیط‌زیست" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="اجتماعی" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="حاکمیتی" fill="#3d52ff" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
-        {/* Radar */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">نمودار رادار ESG گروه</h3>
-          <p className="text-xs text-slate-500 mb-2">میانگین شاخص‌های محیط زیستی، اجتماعی و حاکمیتی</p>
-          <ResponsiveContainer width="100%" height={300}>
+        <div className="card p-5">
+          <h3 className="section-title mb-1">پروفایل ESG گروه</h3>
+          <p className="section-subtitle mb-3">میانگین شاخص‌های کلیدی</p>
+          <ResponsiveContainer width="100%" height={220}>
             <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(255,255,255,0.08)" />
-              <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#374151', fontSize: 9 }} />
-              <Radar name="میانگین گروه" dataKey="value" stroke="#00e5b0" fill="#00e5b0" fillOpacity={0.15} strokeWidth={2.5} />
-              <Tooltip contentStyle={{ background: '#111827', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', color: '#f0f4ff' }} />
+              <PolarGrid stroke="var(--chart-grid)" />
+              <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: 'var(--text-3)' }} />
+              <Radar dataKey="value" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} />
             </RadarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* ESG Bar comparison */}
-      <div className="glass rounded-2xl p-5 card-glow">
-        <h3 className="text-sm font-semibold text-white mb-1">مقایسه سه‌گانه ESG</h3>
-        <p className="text-xs text-slate-500 mb-4">محیط زیست | اجتماعی | حاکمیت — همه شرکت‌های تابعه</p>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={esgBarData} barCategoryGap="25%">
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 100]} />
-            <Tooltip contentStyle={{ background: '#111827', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', color: '#f0f4ff' }} />
-            <Legend wrapperStyle={{ fontSize: '11px', color: '#94a3b8', paddingTop: '8px' }} />
-            <Bar dataKey="محیط" fill="#00d4ff" radius={[3, 3, 0, 0]} />
-            <Bar dataKey="اجتماعی" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
-            <Bar dataKey="حاکمیت" fill="#3d52ff" radius={[3, 3, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="card p-5">
+        <h3 className="section-title mb-4">رتبه‌بندی ESG شرکت‌های تابعه</h3>
+        <div className="space-y-3">
+          {[...subsidiaries].sort((a, b) => b.esg.overallScore - a.esg.overallScore).map((s) => {
+            const rc = ESG_RATINGS[s.esg.rating] ?? ESG_RATINGS.BBB;
+            const envScore = Math.round((s.esg.environmental.carbonEmissions + s.esg.environmental.energyEfficiency + s.esg.environmental.wasteManagement) / 3);
+            const socScore = Math.round((s.esg.social.employeeSatisfaction + s.esg.social.communityInvestment) / 2);
+            const govScore = Math.round((s.esg.governance.transparencyScore + s.esg.governance.anticorruptionMeasures) / 2);
+            return (
+              <div key={s.id} className="p-4 rounded-xl" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm"
+                      style={{ background: rc.bg, color: rc.color, border: `1px solid ${rc.color}30` }}>
+                      {s.esg.rating}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-3)' }}>{rc.label}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl font-bold" style={{ color: rc.color }}>{s.esg.overallScore}</span>
+                    <span className="text-xs" style={{ color: 'var(--text-3)' }}>/۱۰۰</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: 'محیط (E)', value: envScore, color: '#10b981' },
+                    { label: 'اجتماعی (S)', value: socScore, color: '#8b5cf6' },
+                    { label: 'حاکمیت (G)', value: govScore, color: '#3d52ff' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span style={{ color: 'var(--text-3)' }}>{label}</span>
+                        <span className="font-semibold" style={{ color }}>{value}</span>
+                      </div>
+                      <ScoreBar value={value} color={color} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* ESG Improvement Opportunities */}
-      <div className="glass rounded-2xl p-5 card-glow">
-        <h3 className="text-sm font-semibold text-white mb-4">
-          <span className="flex items-center gap-2">
-            <Award className="w-4 h-4 text-amber-400" />
-            فرصت‌های بهبود ESG
-          </span>
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <TrendingUp className="w-4 h-4 text-emerald-400" />
+          <h3 className="section-title">فرصت‌های بهبود ESG</h3>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[
-            {
-              title: 'کاهش انتشار کربن',
-              target: 'معادن سپه و ساختمانی سپه',
-              action: 'سرمایه‌گذاری در تجهیزات کم‌کربن',
-              impact: '+۱۵ امتیاز E',
-              color: 'border-cyan-500/20 bg-cyan-500/5',
-              icon: '🌱',
-            },
-            {
-              title: 'افزایش تنوع جنسیتی',
-              target: 'معادن سپه (۱۵٪) و ساختمانی (۱۸٪)',
-              action: 'برنامه جذب و ارتقای زنان',
-              impact: '+۱۲ امتیاز S',
-              color: 'border-violet-500/20 bg-violet-500/5',
-              icon: '👥',
-            },
-            {
-              title: 'گزارش‌دهی یکپارچه ESG',
-              target: 'همه شرکت‌های تابعه',
-              action: 'پیاده‌سازی استاندارد GRI',
-              impact: '+۸ امتیاز G',
-              color: 'border-brand-500/20 bg-brand-500/5',
-              icon: '📋',
-            },
-          ].map(({ title, target, action, impact, color, icon }) => (
-            <div key={title} className={`p-4 rounded-xl border ${color}`}>
-              <div className="text-2xl mb-2">{icon}</div>
-              <p className="text-sm font-semibold text-white mb-1">{title}</p>
-              <p className="text-xs text-slate-400 mb-2">{target}</p>
-              <p className="text-xs text-slate-300 mb-3">{action}</p>
-              <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">{impact}</span>
+            { icon: Wind, title: 'کاهش ردپای کربنی', desc: 'تدوین نقشه راه کاهش ۱۵٪ انتشار کربن تا ۱۴۰۵', color: '#10b981', priority: 'بالا' },
+            { icon: Users, title: 'افزایش تنوع جنسیتی', desc: 'هدف‌گذاری ۴۰٪ حضور زنان در مدیریت میانی', color: '#8b5cf6', priority: 'متوسط' },
+            { icon: Droplets, title: 'مدیریت مصرف آب', desc: 'پیاده‌سازی سیستم بازیافت آب در واحدهای صنعتی', color: '#22d3ee', priority: 'متوسط' },
+            { icon: Award, title: 'گواهینامه‌های ESG', desc: 'اخذ گواهینامه ISO 14001 برای ۳ شرکت اولویت‌دار', color: '#fbbf24', priority: 'پایین' },
+          ].map(({ icon: Icon, title, desc, color, priority }) => (
+            <div key={title} className="flex items-start gap-3 p-4 rounded-xl"
+              style={{ background: `${color}08`, border: `1px solid ${color}20` }}>
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${color}15` }}>
+                <Icon className="w-4 h-4" style={{ color }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-1)' }}>{title}</p>
+                  <span className="badge" style={{ background: `${color}12`, color, border: `1px solid ${color}25`, fontSize: 10 }}>{priority}</span>
+                </div>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-2)' }}>{desc}</p>
+              </div>
             </div>
           ))}
         </div>
       </div>
+
+      <ContextChat moduleId="esg" contextData={contextData} quickPrompts={QUICK_PROMPTS} title="دستیار ESG" />
     </div>
   );
 }

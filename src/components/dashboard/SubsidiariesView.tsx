@@ -1,12 +1,22 @@
 'use client';
 import { useState } from 'react';
-import { Search, Filter, Download, Building2, Users, TrendingUp, ArrowUp, ArrowDown, X, ChevronDown } from 'lucide-react';
+import { Search, Filter, Download, Building2, Users, TrendingUp, ArrowUp, ArrowDown, X, ChevronDown, FileSpreadsheet, FileText, Table } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import {
   formatCurrency, getStatusConfig, getSectorLabel, getSectorColor, getScoreColor, getScoreBg,
   calcDebtRatio, calcCurrentRatio, calcROE, calcNetMargin, exportDashboardReport,
+  exportPortfolioExcel, exportSubsidiariesToCSV, exportToPDF,
 } from '@/utils';
 import type { Subsidiary } from '@/types';
+import ContextChat from '@/components/ui/ContextChat';
+import ExportMenu from '@/components/ui/ExportMenu';
+
+const QUICK_PROMPTS = [
+  'بهترین و بدترین شرکت‌های تابعه را مقایسه کن',
+  'کدام شرکت بیشترین ریسک را دارد؟',
+  'پیشنهاد بهبود عملکرد شرکت‌های ضعیف',
+  'تحلیل ساختار مالکیت پرتفولیو',
+];
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar,
@@ -41,9 +51,9 @@ function SubsidiaryDetail({ sub, onClose }: { sub: Subsidiary; onClose: () => vo
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-2xl h-full bg-[#0d1117] border-l border-white/10 overflow-y-auto animate-slide-in-right" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-2xl h-full overflow-y-auto animate-slide-in-right" style={{ background: 'var(--bg-2)', borderLeft: '1px solid var(--border)' }} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="sticky top-0 bg-[#0d1117]/95 backdrop-blur-md border-b border-white/10 p-5 z-10">
+        <div className="sticky top-0 backdrop-blur-md border-b p-5 z-10" style={{ background: 'var(--bg-2)', borderColor: 'var(--border)' }}>
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-xl font-bold text-white">{sub.name}</h2>
@@ -352,8 +362,23 @@ export default function SubsidiariesView() {
   const sectors = [...new Set(holdingData.subsidiaries.map((s) => s.sector))];
   const avgScore = holdingData.portfolioSummary.avgFinancialScore;
 
+  const contextData = `شرکت‌های تابعه گروه: ${holdingData.subsidiaries.length} شرکت | میانگین امتیاز کلی: ${avgScore} | ${holdingData.subsidiaries.map(s => `${s.name}: امتیاز ${s.overallScore}, درآمد ${formatCurrency(s.financials[s.financials.length-1].revenue, true)}`).join(' | ')}`;
+
   return (
-    <div className="p-6 space-y-5 animate-fade-in">
+    <div className="p-6 space-y-5 animate-fade-in" id="subsidiaries-content">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <h2 className="section-title">شرکت‌های تابعه</h2>
+          <p className="section-subtitle">مدیریت و پایش جامع شرکت‌های زیرمجموعه گروه</p>
+        </div>
+        <ExportMenu
+          options={[
+            { label: 'گزارش Excel', format: 'xlsx', icon: FileSpreadsheet, color: '#34d399', action: () => exportPortfolioExcel(holdingData) },
+            { label: 'CSV', format: 'csv', icon: Table, color: '#22d3ee', action: () => exportSubsidiariesToCSV(holdingData.subsidiaries) },
+            { label: 'PDF', format: 'pdf', icon: FileText, color: '#a78bfa', action: () => exportToPDF('subsidiaries-content', 'گزارش_شرکت‌های_تابعه') },
+          ]}
+        />
+      </div>
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-48">
@@ -381,16 +406,16 @@ export default function SubsidiariesView() {
         </select>
 
         <button
-          onClick={() => exportDashboardReport(holdingData.subsidiaries)}
+          onClick={() => exportSubsidiariesToCSV(filtered)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-600/20 border border-brand-500/30 text-brand-300 text-sm hover:bg-brand-600/30 transition-all"
         >
           <Download className="w-4 h-4" />
-          خروجی Excel
+          خروجی CSV
         </button>
       </div>
 
       {/* Table */}
-      <div className="glass rounded-2xl border border-white/5 overflow-hidden card-glow">
+      <div className="card overflow-hidden" style={{ padding: 0 }}>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -484,6 +509,8 @@ export default function SubsidiariesView() {
       {selectedSubsidiary && (
         <SubsidiaryDetail sub={selectedSubsidiary} onClose={() => setSelectedSubsidiary(null)} />
       )}
+
+      <ContextChat moduleId="subsidiaries" contextData={contextData} quickPrompts={QUICK_PROMPTS} title="دستیار تحلیل شرکت‌ها" />
     </div>
   );
 }

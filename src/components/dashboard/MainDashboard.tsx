@@ -1,346 +1,306 @@
 'use client';
 import {
   Building2, TrendingUp, Shield, Leaf, AlertTriangle,
-  DollarSign, Users, Activity, Target, Zap, ArrowUp, ArrowDown,
+  DollarSign, Users, Activity, Target, Zap, Brain,
+  ArrowUpRight, Clock, ChevronRight,
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart,
-  PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, BarChart, Bar, RadarChart, Radar, PolarGrid,
+  PolarAngleAxis, Legend,
 } from 'recharts';
 import { useAppStore } from '@/store/appStore';
 import KPICard from './KPICard';
-import { formatCurrency, getStatusConfig, getSectorLabel, getSectorColor, formatPercent, getScoreColor } from '@/utils';
+import { formatCurrency, getStatusConfig, getSectorLabel, getSectorColor, calcDebtRatio, calcROE } from '@/utils';
+import ContextChat from '@/components/ui/ContextChat';
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const QUICK_PROMPTS = [
+  'خلاصه وضعیت پرتفولیو را بده',
+  'کدام شرکت‌ها نیاز به توجه فوری دارند؟',
+  'فرصت‌های بهبود عملکرد کدامند؟',
+  'تحلیل ریسک کلی گروه',
+];
+
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="glass-strong rounded-xl p-3 border border-white/10 text-xs">
-      <p className="text-slate-400 mb-1">{label}</p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} style={{ color: p.color }} className="font-medium">
-          {p.name}: {typeof p.value === 'number' ? p.value.toLocaleString('fa-IR') : p.value}
-        </p>
+    <div className="p-3 rounded-xl text-sm" style={{ background: 'var(--modal-bg)', border: '1px solid var(--border-2)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)', direction: 'rtl' }}>
+      <p className="font-semibold mb-2" style={{ color: 'var(--text-1)' }}>{label}</p>
+      {payload.map((p) => (
+        <div key={p.name} className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full" style={{ background: p.color }} />
+          <span style={{ color: 'var(--text-2)' }}>{p.name}:</span>
+          <span className="font-bold" style={{ color: 'var(--text-1)' }}>{typeof p.value === 'number' ? p.value.toLocaleString('fa-IR') : p.value}</span>
+        </div>
       ))}
     </div>
   );
-};
+}
 
 export default function MainDashboard() {
-  const { holdingData, recommendations, marketAnomalies, setActiveView, setSelectedSubsidiary } = useAppStore();
-  if (!holdingData) return null;
+  const { holdingData, recommendations, marketAnomalies, setActiveView } = useAppStore();
+
+  if (!holdingData) {
+    return (
+      <div className="p-6 text-center py-20" style={{ color: 'var(--text-3)' }}>
+        <Building2 className="w-12 h-12 mx-auto mb-3 opacity-30" />
+        <p>داده‌ای یافت نشد. لطفاً از بخش «داده‌ها» اطلاعات را بارگذاری کنید.</p>
+      </div>
+    );
+  }
 
   const { subsidiaries, portfolioSummary } = holdingData;
-
-  const totalAlerts = subsidiaries.flatMap((s) => s.alerts).filter((a) => !a.acknowledged).length;
-  const criticalAlerts = subsidiaries.flatMap((s) => s.alerts).filter((a) => !a.acknowledged && a.severity === 'critical').length;
+  const latestFinancials = subsidiaries.map((s) => s.financials[s.financials.length - 1]);
+  const totalRevenue = latestFinancials.reduce((a, f) => a + f.revenue, 0);
+  const totalProfit = latestFinancials.reduce((a, f) => a + f.netIncome, 0);
+  const profitableCount = latestFinancials.filter((f) => f.netIncome > 0).length;
+  const criticalCount = subsidiaries.filter((s) => s.status === 'critical').length;
+  const avgDebtRatio = subsidiaries.reduce((a, s) => a + calcDebtRatio(s), 0) / subsidiaries.length;
+  const avgROE = subsidiaries.reduce((a, s) => a + calcROE(s), 0) / subsidiaries.length;
 
   const sectorData = Object.entries(portfolioSummary.sectorAllocation)
     .filter(([, v]) => v > 0)
-    .map(([sector, value]) => ({
-      name: getSectorLabel(sector),
-      value,
-      color: getSectorColor(sector),
-    }));
+    .map(([k, v]) => ({ name: getSectorLabel(k), value: v, color: getSectorColor(k) }));
 
   const radarData = [
-    { subject: 'امتیاز مالی', value: portfolioSummary.avgFinancialScore },
+    { subject: 'مالی', value: portfolioSummary.avgFinancialScore },
     { subject: 'حاکمیت', value: portfolioSummary.avgGovernanceScore },
     { subject: 'ESG', value: portfolioSummary.avgESGScore },
-    { subject: 'نقدینگی', value: 71 },
+    { subject: 'نقدینگی', value: 72 },
     { subject: 'رشد', value: 65 },
-    { subject: 'سودآوری', value: 74 },
   ];
 
-  const compareData = subsidiaries.map((s) => ({
-    name: s.nameEn.split(' ').slice(0, 2).join(' '),
+  const perfTrend = portfolioSummary.performanceTrend.slice(-8);
+  const barData = subsidiaries.slice(0, 6).map((s) => ({
+    name: s.name.split(' ').slice(0, 2).join(' '),
     مالی: s.financialScore,
     حاکمیتی: s.governanceScore,
     ESG: s.esg.overallScore,
   }));
 
-  const avgScore = portfolioSummary.avgFinancialScore;
+  const contextData = `
+گروه: ${holdingData.name}
+تعداد شرکت: ${subsidiaries.length} | سودآور: ${profitableCount}
+کل دارایی: ${formatCurrency(holdingData.totalAssets)} | درآمد: ${formatCurrency(totalRevenue)}
+میانگین امتیاز مالی: ${portfolioSummary.avgFinancialScore.toFixed(1)} | حاکمیتی: ${portfolioSummary.avgGovernanceScore.toFixed(1)} | ESG: ${portfolioSummary.avgESGScore.toFixed(1)}
+نسبت بدهی میانگین: ${avgDebtRatio.toFixed(1)}٪ | ROE میانگین: ${avgROE.toFixed(1)}٪
+وضعیت بحرانی: ${criticalCount} شرکت
+  `.trim();
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {/* Top KPI row */}
+    <div className="p-5 space-y-5 animate-fade-in">
+      {/* KPI Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard
-          title="کل دارایی‌های گروه"
-          value={formatCurrency(holdingData.totalAssets, true)}
-          subtitle="میلیون تومان"
-          change={8.4}
-          changeLabel="رشد سالانه"
-          icon={DollarSign}
-          color="brand"
-        />
-        <KPICard
-          title="درآمد کل گروه"
-          value={formatCurrency(holdingData.totalRevenue, true)}
-          subtitle="سال مالی ۱۴۰۲"
-          change={14.2}
-          changeLabel="رشد نسبت به پارسال"
-          icon={TrendingUp}
-          color="cyan"
-        />
-        <KPICard
-          title="سود خالص گروه"
-          value={formatCurrency(holdingData.totalNetIncome, true)}
-          subtitle="حاشیه سود ۹.۸٪"
-          change={22.1}
-          changeLabel="رشد سود خالص"
-          icon={Activity}
-          color="emerald"
-        />
-        <KPICard
-          title="شرکت‌های تابعه"
-          value={`${portfolioSummary.totalSubsidiaries}`}
-          subtitle={`${portfolioSummary.profitableSubsidiaries} سودده`}
-          change={0}
-          changeLabel={`${criticalAlerts} هشدار بحرانی`}
-          icon={Building2}
-          color={criticalAlerts > 0 ? 'rose' : 'violet'}
-        />
+        <KPICard title="کل دارایی‌های گروه" value={formatCurrency(holdingData.totalAssets, true)} suffix="م.ت"
+          icon={DollarSign} color="brand" change={8.3} subtitle="مجموع دارایی‌های تلفیقی" />
+        <KPICard title="درآمد کل" value={formatCurrency(totalRevenue, true)} suffix="م.ت"
+          icon={TrendingUp} color="cyan" change={12.1} subtitle={`${profitableCount} از ${subsidiaries.length} شرکت سودآور`} />
+        <KPICard title="سود خالص گروه" value={formatCurrency(totalProfit, true)} suffix="م.ت"
+          icon={Activity} color="emerald" change={5.7} subtitle="سود خالص تلفیقی" />
+        <KPICard title="میانگین امتیاز مالی" value={portfolioSummary.avgFinancialScore.toFixed(0)} suffix="/۱۰۰"
+          icon={Target} color="amber" subtitle="امتیاز میانگین پرتفولیو" badge="ارزیابی AI" />
+        <KPICard title="امتیاز حاکمیتی" value={portfolioSummary.avgGovernanceScore.toFixed(0)} suffix="/۱۰۰"
+          icon={Shield} color="violet" change={3.2} subtitle="میانگین گروه" />
+        <KPICard title="امتیاز ESG" value={portfolioSummary.avgESGScore.toFixed(0)} suffix="/۱۰۰"
+          icon={Leaf} color="emerald" change={7.8} subtitle="پایداری شرکتی" />
+        <KPICard title="شرکت‌های بحرانی" value={criticalCount} suffix="شرکت"
+          icon={AlertTriangle} color={criticalCount > 0 ? 'rose' : 'emerald'} subtitle="نیازمند توجه فوری" />
+        <KPICard title="کارکنان گروه" value={(subsidiaries.reduce((a, s) => a + s.employeeCount, 0) / 1000).toFixed(1)} suffix="هزار نفر"
+          icon={Users} color="cyan" change={2.1} subtitle="نیروی انسانی گروه" />
       </div>
 
-      {/* Second row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="میانگین امتیاز مالی" value={`${portfolioSummary.avgFinancialScore.toFixed(1)}`} subtitle="از ۱۰۰" change={2.3} icon={Target} color="amber" size="sm" />
-        <KPICard title="میانگین امتیاز حاکمیتی" value={`${portfolioSummary.avgGovernanceScore.toFixed(1)}`} subtitle="از ۱۰۰" change={1.5} icon={Shield} color="brand" size="sm" />
-        <KPICard title="میانگین امتیاز ESG" value={`${portfolioSummary.avgESGScore.toFixed(1)}`} subtitle="از ۱۰۰" change={5.8} icon={Leaf} color="emerald" size="sm" />
-        <KPICard title="هشدارهای فعال" value={`${totalAlerts}`} subtitle={`${criticalAlerts} بحرانی`} icon={AlertTriangle} color={criticalAlerts > 0 ? 'rose' : 'amber'} size="sm" />
-      </div>
-
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Charts Row 1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Performance trend */}
-        <div className="lg:col-span-2 glass rounded-2xl p-5 card-glow">
+        <div className="lg:col-span-2 card p-5">
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h3 className="text-sm font-semibold text-white">روند عملکرد پرتفولیو</h3>
-              <p className="text-xs text-slate-500 mt-0.5">امتیاز ترکیبی ۱۲ ماه اخیر</p>
+              <h3 className="section-title">روند عملکرد پرتفولیو</h3>
+              <p className="section-subtitle">تغییرات ارزش کل گروه در ماه‌های اخیر</p>
             </div>
-            <div className="flex items-center gap-1.5 text-emerald-400 text-sm font-medium">
-              <ArrowUp className="w-4 h-4" />
-              +۱۸ امتیاز
-            </div>
+            <span className="badge badge-emerald">
+              <ArrowUpRight className="w-3 h-3" />
+              رشد مثبت
+            </span>
           </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={portfolioSummary.performanceTrend}>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={perfTrend}>
               <defs>
                 <linearGradient id="perfGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3d52ff" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#3d52ff" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#3d52ff" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#3d52ff" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="perfGrad2" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00d4ff" stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#00d4ff" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} domain={[55, 95]} />
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
               <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="value" name="امتیاز" stroke="#3d52ff" fill="url(#perfGrad)" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#3d52ff' }} />
+              <Area type="monotone" dataKey="value" name="ارزش پرتفولیو" stroke="#3d52ff" strokeWidth={2.5} fill="url(#perfGrad)" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
 
         {/* Sector allocation */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">توزیع بخشی</h3>
-          <p className="text-xs text-slate-500 mb-4">بر اساس دارایی</p>
+        <div className="card p-5">
+          <h3 className="section-title mb-1">توزیع بخشی</h3>
+          <p className="section-subtitle mb-4">ترکیب صنایع پرتفولیو</p>
           <ResponsiveContainer width="100%" height={160}>
             <PieChart>
               <Pie data={sectorData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={3} dataKey="value">
                 {sectorData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} stroke="transparent" />
+                  <Cell key={i} fill={entry.color} stroke="none" />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: any) => [`${value}٪`, 'سهم']} contentStyle={{ background: '#111827', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', color: '#f0f4ff' }} />
+              <Tooltip formatter={(v: number) => [`${v}٪`, 'سهم']} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="space-y-1.5 mt-2">
-            {sectorData.slice(0, 5).map((s) => (
-              <div key={s.name} className="flex items-center justify-between text-xs">
+          <div className="mt-3 space-y-1.5 max-h-36 overflow-y-auto">
+            {sectorData.map((d) => (
+              <div key={d.name} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full" style={{ background: s.color }} />
-                  <span className="text-slate-400 truncate">{s.name}</span>
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
+                  <span style={{ color: 'var(--text-2)' }}>{d.name}</span>
                 </div>
-                <span className="text-slate-300 font-medium">{s.value}٪</span>
+                <span className="font-semibold" style={{ color: 'var(--text-1)' }}>{d.value}٪</span>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Subsidiary comparison & radar */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">مقایسه امتیازات شرکت‌های تابعه</h3>
-          <p className="text-xs text-slate-500 mb-4">مالی | حاکمیتی | ESG</p>
+      {/* Charts Row 2 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Bar comparison */}
+        <div className="lg:col-span-2 card p-5">
+          <h3 className="section-title mb-1">مقایسه امتیازات شرکت‌ها</h3>
+          <p className="section-subtitle mb-5">ارزیابی مالی، حاکمیتی و ESG شرکت‌های تابعه</p>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={compareData} barCategoryGap="25%">
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 100]} />
+            <BarChart data={barData} barSize={10}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
               <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ fontSize: '11px', color: '#94a3b8', paddingTop: '8px' }} />
+              <Legend wrapperStyle={{ fontSize: 12, direction: 'rtl' }} />
               <Bar dataKey="مالی" fill="#3d52ff" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="حاکمیتی" fill="#00d4ff" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="ESG" fill="#00e5b0" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="حاکمیتی" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="ESG" fill="#10b981" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">نمودار رادار گروه</h3>
-          <p className="text-xs text-slate-500 mb-2">میانگین شاخص‌های کلیدی</p>
-          <ResponsiveContainer width="100%" height={240}>
+        {/* Radar */}
+        <div className="card p-5">
+          <h3 className="section-title mb-1">پروفایل گروه</h3>
+          <p className="section-subtitle mb-4">نمای کلی ابعاد عملکردی</p>
+          <ResponsiveContainer width="100%" height={200}>
             <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(255,255,255,0.08)" />
-              <PolarAngleAxis dataKey="subject" tick={{ fill: '#64748b', fontSize: 10 }} />
-              <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#374151', fontSize: 8 }} />
+              <PolarGrid stroke="var(--chart-grid)" />
+              <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: 'var(--text-3)' }} />
               <Radar name="گروه" dataKey="value" stroke="#3d52ff" fill="#3d52ff" fillOpacity={0.2} strokeWidth={2} />
-              <Tooltip content={<CustomTooltip />} />
             </RadarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Subsidiaries quick overview */}
-      <div className="glass rounded-2xl p-5 card-glow">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-semibold text-white">وضعیت شرکت‌های تابعه</h3>
-            <p className="text-xs text-slate-500 mt-0.5">نمای سریع — بالاتر/پایین‌تر از میانگین گروه</p>
+      {/* Bottom Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Subsidiaries quick view */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="section-title">وضعیت شرکت‌های تابعه</h3>
+            <button onClick={() => setActiveView('subsidiaries')} className="btn btn-ghost btn-sm">
+              مشاهده همه <ChevronRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <button
-            onClick={() => setActiveView('subsidiaries')}
-            className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
-          >
-            مشاهده همه ←
-          </button>
+          <div className="space-y-2">
+            {subsidiaries.slice(0, 5).map((s) => {
+              const cfg = getStatusConfig(s.status);
+              return (
+                <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-xl transition-colors"
+                  style={{ border: '1px solid var(--border)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '')}>
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0`} style={{ background: cfg.dot }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-1)' }}>{s.name}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-3)' }}>{getSectorLabel(s.sector)}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-sm font-bold" style={{ color: 'var(--text-1)' }}>{s.overallScore}</span>
+                    <span className={`badge`} style={{
+                      background: cfg.bg + '33',
+                      color: cfg.color,
+                      border: `1px solid ${cfg.bg}55`,
+                      fontSize: 10, padding: '2px 7px',
+                    }}>{cfg.label}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {subsidiaries.map((sub) => {
-            const sc = getStatusConfig(sub.status);
-            const isAboveAvg = sub.overallScore > avgScore;
-            return (
-              <button
-                key={sub.id}
-                onClick={() => { setSelectedSubsidiary(sub); setActiveView('subsidiaries'); }}
-                className="text-right p-3.5 rounded-xl bg-white/3 border border-white/5 hover:border-white/15 hover:bg-white/5 transition-all group"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${sc.bg} ${sc.color}`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
-                    {sc.label}
-                  </div>
-                  <div className={`flex items-center gap-0.5 text-xs font-medium ${isAboveAvg ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {isAboveAvg ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                    {Math.abs(sub.overallScore - avgScore).toFixed(0)}
-                  </div>
-                </div>
-                <p className="text-sm font-medium text-white group-hover:text-brand-300 transition-colors truncate">{sub.name}</p>
-                <p className="text-xs text-slate-500 mt-0.5 truncate">{sub.nameEn}</p>
-                <div className="flex items-center gap-3 mt-2.5">
-                  <div className="flex-1">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-500">امتیاز</span>
-                      <span className={getScoreColor(sub.overallScore)}>{sub.overallScore}</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-brand-600 to-cyan-500 transition-all"
-                        style={{ width: `${sub.overallScore}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
+
+        {/* Recommendations + Anomalies */}
+        <div className="space-y-3">
+          {/* Top Recs */}
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-brand-400" />
+                <h3 className="section-title">توصیه‌های هوشمند</h3>
+              </div>
+              <button onClick={() => setActiveView('ai-assistant')} className="btn btn-ghost btn-sm">
+                دستیار AI <ChevronRight className="w-3.5 h-3.5" />
               </button>
-            );
-          })}
+            </div>
+            <div className="space-y-2">
+              {recommendations.slice(0, 3).map((rec) => (
+                <div key={rec.id} className="flex items-start gap-3 p-2.5 rounded-xl"
+                  style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <Zap className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
+                    style={{ color: rec.priority === 'critical' ? '#fb7185' : rec.priority === 'high' ? '#fbbf24' : '#34d399' }} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-1)' }}>{rec.title}</p>
+                    <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-3)' }}>{rec.description.slice(0, 60)}...</p>
+                  </div>
+                  <span className={`badge flex-shrink-0 ${rec.priority === 'critical' ? 'badge-rose' : rec.priority === 'high' ? 'badge-amber' : 'badge-emerald'}`} style={{ fontSize: 10 }}>
+                    {rec.priority === 'critical' ? 'فوری' : rec.priority === 'high' ? 'بالا' : 'متوسط'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Market anomalies */}
+          {marketAnomalies.length > 0 && (
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Activity className="w-4 h-4 text-amber-400" />
+                <h3 className="section-title">ناهنجاری‌های بازار</h3>
+              </div>
+              <div className="space-y-2">
+                {marketAnomalies.slice(0, 2).map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 p-2.5 rounded-xl"
+                    style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)' }}>
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold" style={{ color: 'var(--text-1)' }}>{a.subsidiaryName}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-3)' }}>{a.description.slice(0, 50)}...</p>
+                    </div>
+                    <span className="text-xs font-bold text-amber-400">+{a.deviation.toFixed(0)}٪</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Recent recommendations & anomalies */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top recommendations */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-white">توصیه‌های اولویت‌دار</h3>
-              <p className="text-xs text-slate-500">هوش مصنوعی | نیاز به اقدام فوری</p>
-            </div>
-            <button onClick={() => setActiveView('ai-assistant')} className="text-xs text-brand-400 hover:text-brand-300">بیشتر ←</button>
-          </div>
-          <div className="space-y-2.5">
-            {recommendations.slice(0, 3).map((rec) => {
-              const priorityConfig = {
-                critical: { color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20', dot: 'bg-rose-400' },
-                high: { color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20', dot: 'bg-amber-400' },
-                medium: { color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20', dot: 'bg-blue-400' },
-                low: { color: 'text-slate-400', bg: 'bg-slate-500/10 border-slate-500/20', dot: 'bg-slate-400' },
-              }[rec.priority];
-              return (
-                <div key={rec.id} className={`p-3 rounded-xl border ${priorityConfig.bg}`}>
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <p className="text-sm font-medium text-white leading-tight">{rec.title}</p>
-                    <span className={`text-xs font-bold flex-shrink-0 ${priorityConfig.color}`}>
-                      {rec.confidence}٪
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">{rec.description}</p>
-                  <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-                    <span>⏱ {rec.timeframe}</span>
-                    <span>💡 {rec.estimatedImpact.slice(0, 30)}...</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Market anomalies */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-white">ناهنجاری‌های بازار</h3>
-              <p className="text-xs text-slate-500">تشخیص خودکار الگوهای غیرعادی</p>
-            </div>
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-rose-500/10 border border-rose-500/20">
-              <Zap className="w-3 h-3 text-rose-400" />
-              <span className="text-xs text-rose-400">{marketAnomalies.length} مورد</span>
-            </div>
-          </div>
-          <div className="space-y-2.5">
-            {marketAnomalies.map((anom) => {
-              const sevConfig = {
-                high: { color: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/20' },
-                medium: { color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
-                low: { color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
-              }[anom.severity];
-              const typeLabels: Record<string, string> = {
-                volume_spike: 'جهش حجم', price_deviation: 'انحراف قیمت',
-                volatility_surge: 'افزایش نوسان', correlation_break: 'شکست همبستگی',
-              };
-              return (
-                <div key={anom.id} className={`p-3 rounded-xl border ${sevConfig.bg}`}>
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-sm font-medium text-white">{anom.subsidiaryName}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${sevConfig.bg} ${sevConfig.color} border`}>
-                      {typeLabels[anom.type]}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">{anom.description}</p>
-                  <div className="flex items-center gap-3 mt-2 text-xs">
-                    <span className="text-slate-500">پایه: {anom.baseline.toLocaleString('fa-IR')}</span>
-                    <span className={sevConfig.color}>جاری: {anom.current.toLocaleString('fa-IR')}</span>
-                    <span className="font-bold text-white">{anom.deviation > 0 ? '+' : ''}{anom.deviation}٪</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+      <ContextChat moduleId="dashboard" contextData={contextData} quickPrompts={QUICK_PROMPTS} title="دستیار داشبورد" />
     </div>
   );
 }

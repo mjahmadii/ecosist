@@ -223,7 +223,7 @@ export interface AppState {
   isAuthenticated: boolean;
   apiKeyConfigured: boolean;
   apiKey: string;
-  aiProvider: 'openai' | 'anthropic';
+  aiProvider: 'openai' | 'anthropic' | 'gemini';
   holdingData: HoldingCompany | null;
   settings: AppSettings;
   recommendations: AIRecommendation[];
@@ -241,4 +241,41 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   isStreaming?: boolean;
+  moduleContext?: string;
+}
+
+export type Theme = 'dark' | 'light';
+
+export interface SystemPrompt {
+  id: string;
+  moduleId: string;
+  moduleName: string;
+  description: string;
+  prompt: string;
+  isDefault?: boolean;
+  lastModified: string;
+}
+
+export interface ImportValidationError {
+  row: number;
+  column: string;
+  message: string;
+}
+
+export interface ImportResult {
+  success: boolean;
+  errors: ImportValidationError[];
+  warnings: string[];
+  rowsImported: number;
+}
+
+export interface ModuleChatSession {
+  moduleId: string;
+  messages: ChatMessage[];
+}
+
+export interface ExportOptions {
+  format: 'xlsx' | 'csv' | 'pdf' | 'json';
+  filename?: string;
+  includeCharts?: boolean;
 }

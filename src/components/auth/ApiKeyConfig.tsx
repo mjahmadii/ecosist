@@ -6,7 +6,7 @@ import { useAppStore } from '@/store/appStore';
 export default function ApiKeyConfig() {
   const setApiKey = useAppStore((s) => s.setApiKey);
   const [key, setKey] = useState('');
-  const [provider, setProvider] = useState<'openai' | 'anthropic'>('openai');
+  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
   const [isValidating, setIsValidating] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
@@ -24,6 +24,13 @@ export default function ApiKeyConfig() {
       models: ['claude-opus-4-8', 'claude-sonnet-5'],
       color: 'from-orange-600 to-rose-600',
       description: 'Claude Opus | تحلیل دقیق اسناد مالی',
+    },
+    {
+      id: 'gemini' as const,
+      name: 'Google Gemini',
+      models: ['gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+      color: 'from-blue-600 to-violet-600',
+      description: 'Gemini 2.0 Flash | سریع و هوشمند',
     },
   ];
 
@@ -61,7 +68,7 @@ export default function ApiKeyConfig() {
           {/* Provider selection */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-300 mb-3">انتخاب سرویس هوش مصنوعی</label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               {providers.map((p) => (
                 <button
                   key={p.id}
@@ -87,14 +94,14 @@ export default function ApiKeyConfig() {
           {/* API Key input */}
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-300 mb-2">
-              کلید API {provider === 'openai' ? 'OpenAI' : 'Anthropic'}
+              کلید API {provider === 'openai' ? 'OpenAI' : provider === 'anthropic' ? 'Anthropic' : 'Google Gemini'}
             </label>
             <div className="relative">
               <input
                 type={showKey ? 'text' : 'password'}
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder={provider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+                placeholder={provider === 'openai' ? 'sk-...' : provider === 'anthropic' ? 'sk-ant-...' : 'AIza...'}
                 dir="ltr"
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-brand-500/50 font-mono text-sm transition-all"
               />

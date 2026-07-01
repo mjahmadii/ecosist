@@ -3,6 +3,8 @@ import { twMerge } from 'tailwind-merge';
 import * as XLSX from 'xlsx';
 import type { Subsidiary, AppSettings } from '@/types';
 
+export * from './exportUtils';
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
