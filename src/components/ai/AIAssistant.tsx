@@ -145,7 +145,7 @@ export default function AIAssistant() {
           }
         }
         updateLastMessage(full, true);
-      } else {
+      } else if (aiProvider === 'anthropic') {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
@@ -155,7 +155,7 @@ export default function AIAssistant() {
             'anthropic-dangerous-direct-browser-access': 'true',
           },
           body: JSON.stringify({
-            model: 'claude-opus-4-8',
+            model: settings.aiModel || 'claude-opus-4-8',
             max_tokens: 1500,
             system: systemPrompt,
             messages,
@@ -179,6 +179,43 @@ export default function AIAssistant() {
                 }
               } catch {}
             }
+          }
+        }
+        updateLastMessage(full, true);
+      } else {
+        // Gemini
+        const model = settings.aiModel || 'gemini-2.0-flash';
+        const geminiMessages = messages.map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents: geminiMessages,
+              generationConfig: { maxOutputTokens: 1500 },
+            }),
+          }
+        );
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let full = '';
+        while (reader) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          for (const line of chunk.split('\n')) {
+            const data = line.replace(/^data: /, '').trim();
+            if (!data) continue;
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (delta) { full += delta; updateLastMessage(full, false); }
+            } catch {}
           }
         }
         updateLastMessage(full, true);

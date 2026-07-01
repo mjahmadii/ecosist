@@ -3,213 +3,189 @@ import { useState } from 'react';
 import {
   LineChart, Line, BarChart, Bar, ScatterChart, Scatter,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, Legend, ComposedChart, Area, AreaChart,
+  Legend, ComposedChart, Area,
 } from 'recharts';
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle, BarChart2 } from 'lucide-react';
+import { TrendingUp, BarChart3, Activity, Filter } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
-import {
-  formatCurrency, calcDebtRatio, calcCurrentRatio, calcROE, calcROA, calcNetMargin,
-  getScoreColor, getSectorLabel, getSectorColor,
-} from '@/utils';
+import KPICard from '@/components/dashboard/KPICard';
+import ContextChat from '@/components/ui/ContextChat';
+import ExportMenu from '@/components/ui/ExportMenu';
+import { FileSpreadsheet, FileText, Table } from 'lucide-react';
+import { exportPortfolioExcel, exportSubsidiariesToCSV, exportToPDF } from '@/utils';
+import { calcDebtRatio, calcCurrentRatio, calcROE, calcROA, calcNetMargin, getSectorColor } from '@/utils';
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="glass-strong rounded-xl p-3 border border-white/10 text-xs space-y-1">
-      <p className="text-slate-400 font-medium">{label}</p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} style={{ color: p.color ?? p.stroke }}>
-          {p.name}: <span className="font-bold">{typeof p.value === 'number' ? p.value.toLocaleString('fa-IR') : p.value}</span>
-        </p>
-      ))}
-    </div>
-  );
-};
+const QUICK_PROMPTS = [
+  'کدام شرکت‌ها بهترین عملکرد مالی دارند؟',
+  'تحلیل نسبت‌های مالی گروه',
+  'روند درآمدی سه سال گذشته را بررسی کن',
+  'پیشنهاد بهبود سودآوری بده',
+];
+
+const RATIO_COLORS = ['#3d52ff', '#00c48c', '#f59e0b', '#8b5cf6', '#f43f5e', '#22d3ee', '#10b981', '#fbbf24'];
 
 export default function FinancialAnalysis() {
   const { holdingData } = useAppStore();
-  const [selectedMetric, setSelectedMetric] = useState<'revenue' | 'netIncome' | 'ebitda'>('revenue');
-  const [comparisonSubs, setComparisonSubs] = useState<string[]>([]);
+  const [selectedSubs, setSelectedSubs] = useState<string[]>([]);
 
-  if (!holdingData) return null;
+  if (!holdingData) return <div className="p-6 text-center py-20" style={{ color: 'var(--text-3)' }}>داده‌ای موجود نیست</div>;
+
   const { subsidiaries } = holdingData;
+  const toggleSub = (id: string) => setSelectedSubs((prev) =>
+    prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+  );
+  const activeSubs = selectedSubs.length > 0 ? subsidiaries.filter((s) => selectedSubs.includes(s.id)) : subsidiaries.slice(0, 4);
 
-  const toggleSub = (id: string) => {
-    setComparisonSubs((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length < 4 ? [...prev, id] : prev
-    );
-  };
-
-  const selectedSubs = comparisonSubs.length > 0
-    ? subsidiaries.filter((s) => comparisonSubs.includes(s.id))
-    : subsidiaries.slice(0, 3);
-
-  // Build multi-year comparison data
-  const trendData = [2021, 2022, 2023].map((year) => {
-    const entry: Record<string, number> = { year };
-    selectedSubs.forEach((sub) => {
-      const fin = sub.financials.find((f) => f.year === year);
-      if (fin) entry[sub.nameEn.split(' ')[0]] = fin[selectedMetric];
+  // Multi-year trend data
+  const years = [1400, 1401, 1402];
+  const trendData = years.map((year) => {
+    const row: Record<string, number | string> = { year: String(year) };
+    activeSubs.forEach((s) => {
+      const fin = s.financials.find((f) => f.year === year);
+      if (fin) row[s.name.split(' ')[0]] = Math.round(fin.revenue / 1000);
     });
-    return entry;
+    return row;
   });
 
-  // Ratio analysis
-  const ratioData = subsidiaries.map((sub) => ({
-    name: sub.name,
-    nameEn: sub.nameEn.split(' ')[0],
-    debtRatio: calcDebtRatio(sub),
-    currentRatio: calcCurrentRatio(sub),
-    roe: calcROE(sub),
-    roa: calcROA(sub),
-    margin: calcNetMargin(sub),
-    sector: sub.sector,
+  // Ratio heatmap
+  const ratioData = subsidiaries.map((s) => ({
+    name: s.name.split(' ').slice(0, 2).join(' '),
+    'نسبت بدهی': calcDebtRatio(s),
+    'نسبت جاری': calcCurrentRatio(s) * 10,
+    'ROE': calcROE(s),
+    'ROA': calcROA(s),
+    'حاشیه سود': calcNetMargin(s),
+    'امتیاز مالی': s.financialScore,
   }));
 
-  // Scatter: ROE vs Debt Ratio
-  const scatterData = subsidiaries.map((sub) => ({
-    x: calcDebtRatio(sub),
-    y: calcROE(sub),
-    name: sub.name,
-    z: sub.financials[sub.financials.length - 1].revenue / 50000,
-    color: getSectorColor(sub.sector),
+  // ROE vs Debt scatter
+  const scatterData = subsidiaries.map((s) => ({
+    x: calcDebtRatio(s),
+    y: calcROE(s),
+    name: s.name,
+    fill: getSectorColor(s.sector),
   }));
 
-  // Waterfall data for consolidated P&L
-  const plData = [
-    { name: 'درآمد کل', value: holdingData.totalRevenue, fill: '#3d52ff' },
-    { name: 'بهای تمام‌شده', value: -holdingData.totalRevenue * 0.65, fill: '#ff3d6e' },
-    { name: 'سود ناخالص', value: holdingData.totalRevenue * 0.35, fill: '#00d4ff' },
-    { name: 'هزینه عملیاتی', value: -holdingData.totalRevenue * 0.18, fill: '#ffb020' },
-    { name: 'EBITDA', value: holdingData.totalRevenue * 0.17, fill: '#8b5cf6' },
-    { name: 'استهلاک', value: -holdingData.totalRevenue * 0.04, fill: '#ff3d6e' },
-    { name: 'بهره', value: -holdingData.totalRevenue * 0.03, fill: '#ff3d6e' },
-    { name: 'سود خالص', value: holdingData.totalNetIncome, fill: '#00e5b0' },
-  ];
+  const avgRevenue = subsidiaries.reduce((a, s) => a + s.financials[s.financials.length - 1].revenue, 0) / subsidiaries.length;
+  const avgROE = subsidiaries.reduce((a, s) => a + calcROE(s), 0) / subsidiaries.length;
+  const avgMargin = subsidiaries.reduce((a, s) => a + calcNetMargin(s), 0) / subsidiaries.length;
+  const avgDebt = subsidiaries.reduce((a, s) => a + calcDebtRatio(s), 0) / subsidiaries.length;
 
-  const metricLabels = { revenue: 'درآمد', netIncome: 'سود خالص', ebitda: 'EBITDA' };
+  const contextData = `تحلیل مالی گروه
+میانگین ROE: ${avgROE.toFixed(1)}٪ | حاشیه سود: ${avgMargin.toFixed(1)}٪ | نسبت بدهی: ${avgDebt.toFixed(1)}٪
+${subsidiaries.map((s) => `${s.name}: ROE=${calcROE(s)}% | حاشیه=${calcNetMargin(s)}% | بدهی=${calcDebtRatio(s)}%`).join('\n')}`;
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {/* Section 1: Multi-company trend */}
-      <div className="glass rounded-2xl p-5 card-glow">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h3 className="text-sm font-semibold text-white">مقایسه روند {metricLabels[selectedMetric]}</h3>
-            <p className="text-xs text-slate-500">انتخاب حداکثر ۴ شرکت برای مقایسه</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {(['revenue', 'netIncome', 'ebitda'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setSelectedMetric(m)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  selectedMetric === m ? 'bg-brand-600/30 text-brand-300 border border-brand-500/30' : 'text-slate-500 hover:text-slate-300'
-                }`}
-              >
-                {metricLabels[m]}
-              </button>
-            ))}
-          </div>
+    <div className="p-5 space-y-5 animate-fade-in" id="financial-content">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="section-title">تحلیل مالی پیشرفته</h2>
+          <p className="section-subtitle">بررسی نسبت‌های مالی، روند درآمدی و مقایسه عملکرد شرکت‌های تابعه</p>
         </div>
+        <ExportMenu
+          options={[
+            { label: 'گزارش Excel', format: 'xlsx', icon: FileSpreadsheet, color: '#3d52ff', action: () => exportPortfolioExcel(holdingData) },
+            { label: 'CSV', format: 'csv', icon: Table, color: '#22d3ee', action: () => exportSubsidiariesToCSV(subsidiaries) },
+            { label: 'PDF', format: 'pdf', icon: FileText, color: '#a78bfa', action: () => exportToPDF('financial-content', 'گزارش_مالی') },
+          ]}
+        />
+      </div>
 
-        {/* Sub selector chips */}
-        <div className="flex flex-wrap gap-2 mb-4">
-          {subsidiaries.map((sub) => (
-            <button
-              key={sub.id}
-              onClick={() => toggleSub(sub.id)}
-              className={`text-xs px-3 py-1.5 rounded-full border transition-all ${
-                comparisonSubs.includes(sub.id)
-                  ? 'border-brand-500/50 bg-brand-500/20 text-brand-300'
-                  : comparisonSubs.length >= 4
-                  ? 'border-white/5 text-slate-600 cursor-not-allowed'
-                  : 'border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-300'
-              }`}
-              disabled={!comparisonSubs.includes(sub.id) && comparisonSubs.length >= 4}
-            >
-              {sub.name}
-            </button>
-          ))}
-          {comparisonSubs.length > 0 && (
-            <button onClick={() => setComparisonSubs([])} className="text-xs px-2 py-1 rounded-full text-slate-500 hover:text-slate-300">
-              پاک‌سازی
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard title="میانگین ROE" value={avgROE.toFixed(1)} suffix="٪" icon={TrendingUp} color="brand" change={4.2} subtitle="بازده حقوق صاحبان سهام" />
+        <KPICard title="حاشیه سود" value={avgMargin.toFixed(1)} suffix="٪" icon={Activity} color="emerald" change={1.8} subtitle="میانگین حاشیه خالص" />
+        <KPICard title="نسبت بدهی" value={avgDebt.toFixed(0)} suffix="٪" icon={BarChart3} color={avgDebt > 65 ? 'rose' : 'amber'} subtitle="میانگین اهرم مالی" />
+        <KPICard title="درآمد میانگین" value={(avgRevenue / 1000).toFixed(0)} suffix="م.ت" icon={TrendingUp} color="cyan" change={8.5} subtitle="میانگین درآمد شرکت‌ها" />
+      </div>
+
+      {/* Company selector */}
+      <div className="card p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Filter className="w-4 h-4" style={{ color: 'var(--text-3)' }} />
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-1)' }}>فیلتر شرکت‌ها برای نمودار روند</p>
+          {selectedSubs.length > 0 && (
+            <button onClick={() => setSelectedSubs([])} className="btn btn-ghost btn-sm mr-auto">
+              پاک کردن فیلتر
             </button>
           )}
         </div>
+        <div className="flex flex-wrap gap-2">
+          {subsidiaries.map((s, i) => {
+            const isSelected = selectedSubs.includes(s.id) || (selectedSubs.length === 0 && i < 4);
+            return (
+              <button key={s.id} onClick={() => toggleSub(s.id)}
+                className="text-xs px-3 py-1.5 rounded-full transition-all"
+                style={isSelected
+                  ? { background: `${RATIO_COLORS[i % RATIO_COLORS.length]}20`, color: RATIO_COLORS[i % RATIO_COLORS.length], border: `1px solid ${RATIO_COLORS[i % RATIO_COLORS.length]}40` }
+                  : { background: 'var(--surface-2)', color: 'var(--text-3)', border: '1px solid var(--border)' }}>
+                {s.name.split(' ').slice(0, 2).join(' ')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-        <ResponsiveContainer width="100%" height={240}>
+      {/* Revenue trend */}
+      <div className="card p-5">
+        <h3 className="section-title mb-1">روند درآمد شرکت‌های منتخب</h3>
+        <p className="section-subtitle mb-5">مقایسه درآمد سالانه (میلیارد تومان)</p>
+        <ResponsiveContainer width="100%" height={260}>
           <LineChart data={trendData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="year" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '11px', color: '#94a3b8' }} />
-            {selectedSubs.map((sub, i) => (
-              <Line
-                key={sub.id}
-                type="monotone"
-                dataKey={sub.nameEn.split(' ')[0]}
-                stroke={['#3d52ff', '#00d4ff', '#00e5b0', '#ffb020'][i]}
-                strokeWidth={2.5}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {activeSubs.map((s, i) => (
+              <Line key={s.id} type="monotone" dataKey={s.name.split(' ')[0]}
+                stroke={RATIO_COLORS[i % RATIO_COLORS.length]} strokeWidth={2.5}
+                dot={{ r: 4 }} activeDot={{ r: 6 }} />
             ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
 
-      {/* Section 2: Ratio heatmap */}
-      <div className="glass rounded-2xl p-5 card-glow">
-        <h3 className="text-sm font-semibold text-white mb-1">تحلیل نسبت‌های مالی</h3>
-        <p className="text-xs text-slate-500 mb-4">مقایسه شاخص‌های کلیدی همه شرکت‌های تابعه</p>
+      {/* Ratio table */}
+      <div className="card p-5">
+        <h3 className="section-title mb-4">جدول نسبت‌های مالی کلیدی</h3>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="tbl">
             <thead>
-              <tr className="border-b border-white/10">
-                <th className="text-right text-xs font-medium text-slate-400 py-2 px-3">شرکت</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">نسبت بدهی</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">نسبت جاری</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">بازده حقوق</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">بازده دارایی</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">حاشیه سود</th>
-                <th className="text-center text-xs font-medium text-slate-400 py-2 px-3">Z-Score</th>
+              <tr>
+                <th>شرکت</th>
+                <th>نسبت بدهی (٪)</th>
+                <th>نسبت جاری (x)</th>
+                <th>ROE (٪)</th>
+                <th>ROA (٪)</th>
+                <th>حاشیه سود (٪)</th>
+                <th>امتیاز مالی</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {ratioData.map((row, i) => {
-                const sub = subsidiaries[i];
+            <tbody>
+              {subsidiaries.map((s) => {
+                const debt = calcDebtRatio(s);
+                const curr = calcCurrentRatio(s);
+                const roe = calcROE(s);
+                const roa = calcROA(s);
+                const margin = calcNetMargin(s);
+                const colorVal = (v: number, good: number, bad: number) =>
+                  v >= good ? '#34d399' : v >= bad ? '#fbbf24' : '#fb7185';
                 return (
-                  <tr key={row.name} className="hover:bg-white/3 transition-colors">
-                    <td className="py-2.5 px-3">
+                  <tr key={s.id}>
+                    <td className="font-semibold" style={{ color: 'var(--text-1)', whiteSpace: 'nowrap' }}>{s.name}</td>
+                    <td style={{ color: colorVal(100 - debt, 65, 35), fontWeight: 600 }}>{debt}٪</td>
+                    <td style={{ color: colorVal(curr, 1.5, 1.0), fontWeight: 600 }}>{curr}x</td>
+                    <td style={{ color: colorVal(roe, 15, 8), fontWeight: 600 }}>{roe}٪</td>
+                    <td style={{ color: colorVal(roa, 8, 4), fontWeight: 600 }}>{roa}٪</td>
+                    <td style={{ color: colorVal(margin, 12, 6), fontWeight: 600 }}>{margin}٪</td>
+                    <td>
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ background: getSectorColor(row.sector) }} />
-                        <span className="text-slate-200 text-xs">{row.name}</span>
-                      </div>
-                    </td>
-                    {[
-                      { val: row.debtRatio, suffix: '٪', warn: (v: number) => v > 65, good: (v: number) => v < 50 },
-                      { val: row.currentRatio, suffix: '', warn: (v: number) => v < 1.2, good: (v: number) => v > 2 },
-                      { val: row.roe, suffix: '٪', warn: (v: number) => v < 5, good: (v: number) => v > 15 },
-                      { val: row.roa, suffix: '٪', warn: (v: number) => v < 3, good: (v: number) => v > 8 },
-                      { val: row.margin, suffix: '٪', warn: (v: number) => v < 5, good: (v: number) => v > 15 },
-                    ].map(({ val, suffix, warn, good }, j) => (
-                      <td key={j} className="py-2.5 px-3 text-center">
-                        <span className={`text-xs font-mono font-medium px-2 py-0.5 rounded ${
-                          warn(val) ? 'text-rose-400 bg-rose-500/10' :
-                          good(val) ? 'text-emerald-400 bg-emerald-500/10' :
-                          'text-slate-300'
-                        }`}>
-                          {val}{suffix}
+                        <span className="font-bold" style={{ color: s.financialScore >= 75 ? '#34d399' : s.financialScore >= 55 ? '#fbbf24' : '#fb7185' }}>
+                          {s.financialScore}
                         </span>
-                      </td>
-                    ))}
-                    <td className="py-2.5 px-3 text-center">
-                      <span className={`text-xs font-mono font-bold ${
-                        sub.altmanZ.zScore > 2.99 ? 'text-emerald-400' :
-                        sub.altmanZ.zScore > 1.81 ? 'text-amber-400' : 'text-rose-400'
-                      }`}>{sub.altmanZ.zScore}</span>
+                        <div className="score-track flex-1" style={{ minWidth: 60 }}>
+                          <div className="score-fill" style={{ width: `${s.financialScore}%`, background: s.financialScore >= 75 ? '#34d399' : s.financialScore >= 55 ? '#fbbf24' : '#fb7185' }} />
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -217,67 +193,41 @@ export default function FinancialAnalysis() {
             </tbody>
           </table>
         </div>
-        <div className="flex items-center gap-4 mt-3 text-xs">
-          <div className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded bg-rose-500/60 inline-block" />هشدار</div>
-          <div className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded bg-emerald-500/60 inline-block" />مطلوب</div>
-          <div className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded bg-slate-500/40 inline-block" />عادی</div>
+        <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'var(--text-3)' }}>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-1" />خوب</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1" />متوسط</span>
+          <span><span className="inline-block w-2 h-2 rounded-full bg-rose-400 mr-1" />ضعیف</span>
         </div>
       </div>
 
-      {/* Section 3: Scatter + P&L */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Scatter ROE vs Debt */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">بازده در برابر ریسک</h3>
-          <p className="text-xs text-slate-500 mb-4">بازده حقوق صاحبان سهام (ROE) در برابر نسبت بدهی</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <ScatterChart>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="x" name="نسبت بدهی" type="number" unit="٪" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} label={{ value: 'نسبت بدهی ٪', position: 'bottom', fill: '#64748b', fontSize: 10 }} />
-              <YAxis dataKey="y" name="ROE" type="number" unit="٪" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} />
-              <Tooltip
-                cursor={{ strokeDasharray: '3 3' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload?.length) return null;
-                  const d = payload[0].payload;
-                  return (
-                    <div className="glass-strong rounded-xl p-3 text-xs border border-white/10">
-                      <p className="text-white font-medium">{d.name}</p>
-                      <p className="text-slate-400">بدهی: {d.x}٪</p>
-                      <p className="text-slate-400">ROE: {d.y}٪</p>
-                    </div>
-                  );
-                }}
-              />
-              <ReferenceLine x={65} stroke="#ff3d6e" strokeDasharray="4 4" label={{ value: 'آستانه بدهی', fill: '#ff3d6e', fontSize: 9 }} />
-              <Scatter data={scatterData} fill="#3d52ff">
-                {scatterData.map((entry, i) => (
-                  <cell key={i} fill={entry.color} />
-                ))}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Consolidated P&L */}
-        <div className="glass rounded-2xl p-5 card-glow">
-          <h3 className="text-sm font-semibold text-white mb-1">صورت سود و زیان تلفیقی</h3>
-          <p className="text-xs text-slate-500 mb-4">گروه سرمایه‌گذاری — سال ۱۴۰۲ (میلیون تومان)</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={plData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
-              <XAxis type="number" tick={{ fill: '#64748b', fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis dataKey="name" type="category" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} width={90} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="value" name="مقدار" radius={[0, 4, 4, 0]}>
-                {plData.map((entry, i) => (
-                  <cell key={i} fill={entry.fill} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+      {/* ROE vs Debt scatter */}
+      <div className="card p-5">
+        <h3 className="section-title mb-1">نمودار ROE در برابر نسبت بدهی</h3>
+        <p className="section-subtitle mb-5">تحلیل رابطه اهرم مالی و بازده</p>
+        <ResponsiveContainer width="100%" height={260}>
+          <ScatterChart>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="x" name="نسبت بدهی" unit="٪" tick={{ fontSize: 11 }} label={{ value: 'نسبت بدهی (٪)', position: 'bottom', fontSize: 11 }} />
+            <YAxis dataKey="y" name="ROE" unit="٪" tick={{ fontSize: 11 }} label={{ value: 'ROE (٪)', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+            <Tooltip cursor={{ strokeDasharray: '3 3' }}
+              content={({ payload }) => payload?.[0] ? (
+                <div className="p-3 rounded-xl text-xs" style={{ background: 'var(--modal-bg)', border: '1px solid var(--border-2)' }}>
+                  <p className="font-bold mb-1" style={{ color: 'var(--text-1)' }}>{payload[0].payload.name}</p>
+                  <p style={{ color: 'var(--text-2)' }}>نسبت بدهی: {payload[0].payload.x}٪</p>
+                  <p style={{ color: 'var(--text-2)' }}>ROE: {payload[0].payload.y}٪</p>
+                </div>
+              ) : null}
+            />
+            <Scatter data={scatterData} name="شرکت‌ها">
+              {scatterData.map((entry, i) => (
+                <circle key={i} r={8} fill={entry.fill} opacity={0.85} />
+              ))}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
       </div>
+
+      <ContextChat moduleId="analysis" contextData={contextData} quickPrompts={QUICK_PROMPTS} title="دستیار تحلیل مالی" />
     </div>
   );
 }
